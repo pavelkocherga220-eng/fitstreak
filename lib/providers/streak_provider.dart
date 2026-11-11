@@ -151,14 +151,24 @@ class StreakNotifier extends Notifier<StreakState> {
     await box.put('fitstreak_data', data);
 
     if (Firebase.apps.isEmpty) return; 
-
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
       try {
+        // 1. Приватные данные
         await FirebaseFirestore.instance
             .collection('users')
             .doc(user.uid)
             .set(data, SetOptions(merge: true)); 
+            
+        // 2. Публичные данные для лидерборда
+        await FirebaseFirestore.instance
+            .collection('leaderboard')
+            .doc(user.uid)
+            .set({
+              'user_name': state.userName,
+              'xp': state.xp,
+              'avatar_index': state.avatarIndex,
+            }, SetOptions(merge: true));
       } catch (e) {
         debugPrint('Ошибка сохранения в облако: $e');
       }
@@ -309,7 +319,7 @@ class StreakNotifier extends Notifier<StreakState> {
     }
   }
 
-   Future<({bool leveledUp, List<Achievement> newAchievements, bool boostApplied})> finishWorkout(int seconds, String note, {required String type}) async {
+  Future<({bool leveledUp, List<Achievement> newAchievements, bool boostApplied})> finishWorkout(int seconds, String note, {required String type}) async {
     final oldLevel = level;
     final now = DateTime.now();
     final wasCompletedToday = state.lastCompletionDate != null && 
@@ -329,9 +339,6 @@ class StreakNotifier extends Notifier<StreakState> {
     
     if (boostApplied) {
       earnedXp *= 2;
-      debugPrint('⚡ БУСТ ПРИМЕНЕН! Было: $baseXp, стало: $earnedXp');
-    } else {
-      debugPrint('❌ Буста нет. Начислено: $baseXp');
     }
 
     final newNotes = note.trim().isNotEmpty 
@@ -492,17 +499,32 @@ class StreakNotifier extends Notifier<StreakState> {
 
   String exportJson() {
     final data = {
-      'streak_count': state.streakCount, 'max_streak': state.maxStreak, 'streak_freezes': state.streakFreezes,
-      'last_completion_date': state.lastCompletionDate?.toIso8601String(), 'last_gap_processed_date': state.lastGapProcessedDate?.toIso8601String(),
-      'today_workouts_count': state.todayWorkoutsCount, 'total_workouts_completed': state.totalWorkoutsCompleted,
-      'total_seconds_spent': state.totalSecondsSpent, 'xp': state.xp, 'crystals': state.crystals,
-      'weekly_xp': state.weeklyXp, 'has_xp_boost': state.hasXpBoost, 'user_name': state.userName, 'avatar_index': state.avatarIndex,
-      'reminder_hour': state.reminderTime.hour, 'reminder_minute': state.reminderTime.minute, 'quest_date': state.questDate,
-      'daily_quests': state.dailyQuests.map((q) => q.toJson()).toList(), 'selected_workout_type': state.selectedWorkoutType,
-      'sessions': state.sessions.map((s) => s.toJson()).toList(), 'notes': state.notes.map((n) => n.toJson()).toList(),
+      'streak_count': state.streakCount,
+      'max_streak': state.maxStreak,
+      'streak_freezes': state.streakFreezes,
+      'last_completion_date': state.lastCompletionDate?.toIso8601String(),
+      'last_gap_processed_date': state.lastGapProcessedDate?.toIso8601String(),
+      'today_workouts_count': state.todayWorkoutsCount,
+      'total_workouts_completed': state.totalWorkoutsCompleted,
+      'total_seconds_spent': state.totalSecondsSpent,
+      'xp': state.xp,
+      'crystals': state.crystals,
+      'weekly_xp': state.weeklyXp,
+      'has_xp_boost': state.hasXpBoost,
+      'user_name': state.userName,
+      'avatar_index': state.avatarIndex,
+      'reminder_hour': state.reminderTime.hour,
+      'reminder_minute': state.reminderTime.minute,
+      'quest_date': state.questDate,
+      'daily_quests': state.dailyQuests.map((q) => q.toJson()).toList(),
+      'selected_workout_type': state.selectedWorkoutType,
+      'sessions': state.sessions.map((s) => s.toJson()).toList(),
+      'notes': state.notes.map((n) => n.toJson()).toList(),
       'planned_workouts': state.plannedWorkouts.map((k, v) => MapEntry(k.toString(), v)),
-      'custom_workout_types': state.customWorkoutTypes.toList(), 'unlocked_achievements': state.unlockedAchievements.toList(),
-      'regular_achievements': state.regularUnlocked.toList(), 'workout_type_counts': state.workoutTypeCounts,
+      'custom_workout_types': state.customWorkoutTypes.toList(),
+      'unlocked_achievements': state.unlockedAchievements.toList(),
+      'regular_achievements': state.regularUnlocked.toList(),
+      'workout_type_counts': state.workoutTypeCounts,
     };
     return const JsonEncoder.withIndent('  ').convert(data);
   }
@@ -510,22 +532,29 @@ class StreakNotifier extends Notifier<StreakState> {
   Future<void> importJson(String jsonString) async {
     final data = jsonDecode(jsonString) as Map<String, dynamic>;
     state = StreakState(
-      streakCount: (data['streak_count'] as num?)?.toInt() ?? 0, maxStreak: (data['max_streak'] as num?)?.toInt() ?? 0,
+      streakCount: (data['streak_count'] as num?)?.toInt() ?? 0,
+      maxStreak: (data['max_streak'] as num?)?.toInt() ?? 0,
       streakFreezes: (data['streak_freezes'] as num?)?.toInt() ?? 1,
       lastCompletionDate: data['last_completion_date'] != null ? DateTime.tryParse(data['last_completion_date']) : null,
       lastGapProcessedDate: data['last_gap_processed_date'] != null ? DateTime.tryParse(data['last_gap_processed_date']) : null,
       todayWorkoutsCount: (data['today_workouts_count'] as num?)?.toInt() ?? 0,
       totalWorkoutsCompleted: (data['total_workouts_completed'] as num?)?.toInt() ?? 0,
       totalSecondsSpent: (data['total_seconds_spent'] as num?)?.toInt() ?? 0,
-      xp: (data['xp'] as num?)?.toInt() ?? 0, crystals: (data['crystals'] as num?)?.toInt() ?? 0,
-      weeklyXp: (data['weekly_xp'] as num?)?.toInt() ?? 0, hasXpBoost: data['has_xp_boost'] as bool? ?? false,
-      userName: (data['user_name'] as String?) ?? 'Атлет', avatarIndex: (data['avatar_index'] as num?)?.toInt() ?? 0,
-      reminderTime: TimeOfDay(hour: (data['reminder_hour'] as num?)?.toInt() ?? 18, minute: (data['reminder_minute'] as num?)?.toInt() ?? 0),
+      xp: (data['xp'] as num?)?.toInt() ?? 0,
+      crystals: (data['crystals'] as num?)?.toInt() ?? 0,
+      weeklyXp: (data['weekly_xp'] as num?)?.toInt() ?? 0,
+      hasXpBoost: data['has_xp_boost'] as bool? ?? false,
+      userName: (data['user_name'] as String?) ?? 'Атлет',
+      avatarIndex: (data['avatar_index'] as num?)?.toInt() ?? 0,
+      reminderTime: TimeOfDay(
+        hour: (data['reminder_hour'] as num?)?.toInt() ?? 18,
+        minute: (data['reminder_minute'] as num?)?.toInt() ?? 0,
+      ),
       questDate: (data['quest_date'] as String?) ?? '',
-      dailyQuests: ((data['daily_quests'] as List?) ?? []).map((e) => DailyQuest.fromJson(e)).toList(),
+      dailyQuests: ((data['daily_quests'] as List?) ?? []).map((e) => DailyQuest.fromJson(Map<String, dynamic>.from(e))).toList(),
       selectedWorkoutType: (data['selected_workout_type'] as String?) ?? defaultWorkoutTypes.first,
-      sessions: ((data['sessions'] as List?) ?? []).map((e) => WorkoutSession.fromJson(e)).toList(),
-      notes: ((data['notes'] as List?) ?? []).map((e) => WorkoutNote.fromJson(e)).toList(),
+      sessions: ((data['sessions'] as List?) ?? []).map((e) => WorkoutSession.fromJson(Map<String, dynamic>.from(e))).toList(),
+      notes: ((data['notes'] as List?) ?? []).map((e) => WorkoutNote.fromJson(Map<String, dynamic>.from(e))).toList(),
       plannedWorkouts: ((data['planned_workouts'] as Map?) ?? {}).map((k, v) => MapEntry(int.parse(k.toString()), v.toString())),
       customWorkoutTypes: ((data['custom_workout_types'] as List?) ?? []).map((e) => e.toString()).toSet(),
       unlockedAchievements: ((data['unlocked_achievements'] as List?) ?? []).map((e) => e.toString()).toSet(),

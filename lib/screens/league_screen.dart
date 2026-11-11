@@ -64,7 +64,7 @@ class LeagueScreen extends ConsumerWidget {
             child: StreamBuilder<QuerySnapshot>(
               // Берем топ-30 пользователей по общему XP
               stream: FirebaseFirestore.instance
-                  .collection('users')
+                  .collection('leaderboard')
                   .orderBy('xp', descending: true)
                   .limit(30)
                   .snapshots(),
