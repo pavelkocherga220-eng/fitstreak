@@ -3,13 +3,15 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
+
 import '../models/achievement.dart';
 import '../models/daily_quest.dart';
 import '../models/streak_state.dart';
 import '../models/workout_note.dart';
 import '../models/workout_session.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
 final streakProvider = NotifierProvider<StreakNotifier, StreakState>(StreakNotifier.new);
 
@@ -31,7 +33,6 @@ class StreakNotifier extends Notifier<StreakState> {
     return const StreakState();
   }
 
-  // --- ГЕТТЕРЫ (Математика) ---
   List<String> get workoutTypes => [...defaultWorkoutTypes, ...state.customWorkoutTypes];
 
   int _getXpRequirement(int level) {
@@ -63,17 +64,14 @@ class StreakNotifier extends Notifier<StreakState> {
   int get requiredLevelXp => levelInfo.requiredXp;
   double get levelProgress => currentLevelXp / requiredLevelXp;
 
-  // --- PERSISTENCE ---
- Future<void> _loadData() async {
-    // Открываем коробку (базу данных) Hive. Если её нет, она создастся.
+  Future<void> _loadData() async {
     final box = await Hive.openBox('fitstreak_box');
-    final dynamic rawData = box.get('fitstreak_data');
-    
-    if (rawData != null) {
+    final raw = box.get('fitstreak_data');
+    bool loadedSuccessfully = false;
+
+    if (raw != null) {
       try {
-        // Hive может хранить Map напрямую, но JSON строка тоже подойдет
-        final data = rawData as Map<dynamic, dynamic>;
-        
+        final data = Map<String, dynamic>.from(raw);
         state = StreakState(
           streakCount: (data['streak_count'] as num?)?.toInt() ?? 0,
           maxStreak: (data['max_streak'] as num?)?.toInt() ?? 0,
@@ -85,6 +83,7 @@ class StreakNotifier extends Notifier<StreakState> {
           totalSecondsSpent: (data['total_seconds_spent'] as num?)?.toInt() ?? 0,
           xp: (data['xp'] as num?)?.toInt() ?? 0,
           crystals: (data['crystals'] as num?)?.toInt() ?? 0,
+          weeklyXp: (data['weekly_xp'] as num?)?.toInt() ?? 0,
           hasXpBoost: data['has_xp_boost'] as bool? ?? false,
           userName: (data['user_name'] as String?) ?? 'Атлет',
           avatarIndex: (data['avatar_index'] as num?)?.toInt() ?? 0,
@@ -102,23 +101,24 @@ class StreakNotifier extends Notifier<StreakState> {
           unlockedAchievements: ((data['unlocked_achievements'] as List?) ?? []).map((e) => e.toString()).toSet(),
           regularUnlocked: ((data['regular_achievements'] as List?) ?? []).map((e) => e.toString()).toSet(),
           workoutTypeCounts: ((data['workout_type_counts'] as Map?) ?? {}).map((k, v) => MapEntry(k.toString(), (v as num).toInt())),
-          weeklyXp: (data['weekly_xp'] as num?)?.toInt() ?? 0,
-
-
         );
+        loadedSuccessfully = true;
       } catch (e) {
-        debugPrint('Ошибка загрузки из Hive: $e');
+        debugPrint('Ошибка загрузки данных (не перезаписываем!): $e');
+        return; 
       }
+    } else {
+      loadedSuccessfully = true;
     }
-    
-    processGapIfNeeded();
-    generateDailyQuests();
+
+    if (loadedSuccessfully) {
+      processGapIfNeeded();
+      generateDailyQuests();
+    }
   }
 
-   Future<void> saveAll() async {
+  Future<void> saveAll() async {
     final box = await Hive.openBox('fitstreak_box');
-    
-    // Формируем Map, который Hive сохранит на диск
     final data = {
       'streak_count': state.streakCount,
       'max_streak': state.maxStreak,
@@ -130,6 +130,7 @@ class StreakNotifier extends Notifier<StreakState> {
       'total_seconds_spent': state.totalSecondsSpent,
       'xp': state.xp,
       'crystals': state.crystals,
+      'weekly_xp': state.weeklyXp,
       'has_xp_boost': state.hasXpBoost,
       'user_name': state.userName,
       'avatar_index': state.avatarIndex,
@@ -145,46 +146,39 @@ class StreakNotifier extends Notifier<StreakState> {
       'unlocked_achievements': state.unlockedAchievements.toList(),
       'regular_achievements': state.regularUnlocked.toList(),
       'workout_type_counts': state.workoutTypeCounts,
-      'weekly_xp': state.weeklyXp,
     };
     
-    // 1. Сохраняем локально в Hive
     await box.put('fitstreak_data', data);
 
-    // 2. Сохраняем в облако Firebase, если пользователь авторизован
+    if (Firebase.apps.isEmpty) return; 
+
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
       try {
         await FirebaseFirestore.instance
             .collection('users')
             .doc(user.uid)
-            .set(data); // set() перезапишет старые данные новыми
+            .set(data, SetOptions(merge: true)); 
       } catch (e) {
-        debugPrint('Ошибка синхронизации с облаком: $e');
+        debugPrint('Ошибка сохранения в облако: $e');
       }
     }
   }
-Future<void> loadFromCloud() async {
+
+  Future<void> loadFromCloud() async {
+    if (Firebase.apps.isEmpty) return;
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
     try {
       final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
-      
       if (doc.exists && doc.data() != null) {
-        // Если в облаке есть данные, скачиваем их
         final cloudData = doc.data()!;
-        
-        // Сохраняем их в локальную базу Hive
         final box = await Hive.openBox('fitstreak_box');
         await box.put('fitstreak_data', cloudData);
-        
-        // Перечитываем данные из Hive в стейт (вызываем ваш метод загрузки)
         await _loadData(); 
-        
         debugPrint('Данные успешно загружены из облака');
       } else {
-        // Если в облаке пусто (первый вход), загружаем текущий прогресс туда
         await saveAll();
         debugPrint('Облако пустое. Локальные данные отправлены в облако.');
       }
@@ -192,51 +186,48 @@ Future<void> loadFromCloud() async {
       debugPrint('Ошибка загрузки из облака: $e');
     }
   }
-  // --- ЛОГИКА ---
+
   void processGapIfNeeded() {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-
-    if (state.lastCompletionDate != null) {
-      final lastDay = DateTime(state.lastCompletionDate!.year, state.lastCompletionDate!.month, state.lastCompletionDate!.day);
-      if (lastDay != today) {
-        state = state.copyWith(todayWorkoutsCount: 0);
-      }
+    if (state.lastCompletionDate == null) {
+      return;
     }
 
-    if (state.lastGapProcessedDate != null) {
-      final processed = DateTime(state.lastGapProcessedDate!.year, state.lastGapProcessedDate!.month, state.lastGapProcessedDate!.day);
-      if (!processed.isBefore(today)) {
-        return;
-      }
-    }
-
-    int newStreak = state.streakCount;
-    int newFreezes = state.streakFreezes;
-    final Map<int, String> newPlanned = Map.from(state.plannedWorkouts);
-
-    if (state.lastCompletionDate != null) {
-      final lastDay = DateTime(state.lastCompletionDate!.year, state.lastCompletionDate!.month, state.lastCompletionDate!.day);
-      final diff = today.difference(lastDay).inDays;
-      if (diff > 1) {
-        final missed = diff - 1;
-        if (newFreezes >= missed) {
-          newFreezes -= missed;
-        } else {
-          newStreak = 0;
-          newFreezes = 0;
-          newPlanned.clear();
-        }
-      }
-    }
+    DateTime dateOnly(DateTime d) => DateTime.utc(d.year, d.month, d.day);
+    final today = dateOnly(DateTime.now());
+    final lastDay = dateOnly(state.lastCompletionDate!);
     
-    state = state.copyWith(
-      streakCount: newStreak,
-      streakFreezes: newFreezes,
-      plannedWorkouts: newPlanned,
-      lastGapProcessedDate: today,
-    );
-    saveAll();
+    final charged = state.lastGapProcessedDate == null
+        ? lastDay
+        : dateOnly(state.lastGapProcessedDate!).subtract(const Duration(days: 1));
+        
+    final anchor = charged.isAfter(lastDay) ? charged : lastDay;
+    final missed = today.difference(anchor).inDays - 1;
+
+    if (missed > 0) {
+      int newStreak = state.streakCount;
+      int newFreezes = state.streakFreezes;
+      final newPlanned = Map<int, String>.from(state.plannedWorkouts);
+
+      if (newFreezes >= missed) {
+        newFreezes -= missed;
+      } else {
+        newStreak = 0;
+        newFreezes = 0;
+        newPlanned.clear();
+      }
+      
+      state = state.copyWith(
+        streakCount: newStreak,
+        streakFreezes: newFreezes,
+        plannedWorkouts: newPlanned,
+        lastGapProcessedDate: today,
+        todayWorkoutsCount: 0, 
+      );
+      saveAll();
+    } else if (state.lastGapProcessedDate == null || !dateOnly(state.lastGapProcessedDate!).isAtSameMomentAs(today)) {
+      state = state.copyWith(lastGapProcessedDate: today);
+      saveAll();
+    }
   }
 
   void generateDailyQuests() {
@@ -318,10 +309,13 @@ Future<void> loadFromCloud() async {
     }
   }
 
-  Future<({bool leveledUp, List<Achievement> newAchievements})> finishWorkout(int seconds, String note, {required String type}) async {
+   Future<({bool leveledUp, List<Achievement> newAchievements, bool boostApplied})> finishWorkout(int seconds, String note, {required String type}) async {
     final oldLevel = level;
     final now = DateTime.now();
-    final wasCompletedToday = state.lastCompletionDate?.day == now.day;
+    final wasCompletedToday = state.lastCompletionDate != null && 
+        state.lastCompletionDate!.year == now.year &&
+        state.lastCompletionDate!.month == now.month &&
+        state.lastCompletionDate!.day == now.day;
 
     final newSession = WorkoutSession(date: now, type: type, durationSeconds: seconds);
     final newSessions = [...state.sessions, newSession];
@@ -329,7 +323,17 @@ Future<void> loadFromCloud() async {
       newSessions.removeAt(0);
     }
 
-    final earnedXp = 10 + (seconds ~/ 60) * 10;
+    int baseXp = 10 + (seconds ~/ 60) * 10;
+    int earnedXp = baseXp;
+    bool boostApplied = state.hasXpBoost;
+    
+    if (boostApplied) {
+      earnedXp *= 2;
+      debugPrint('⚡ БУСТ ПРИМЕНЕН! Было: $baseXp, стало: $earnedXp');
+    } else {
+      debugPrint('❌ Буста нет. Начислено: $baseXp');
+    }
+
     final newNotes = note.trim().isNotEmpty 
       ? [WorkoutNote(type: type, text: note.trim(), date: now), ...state.notes]
       : state.notes;
@@ -343,6 +347,8 @@ Future<void> loadFromCloud() async {
       totalWorkoutsCompleted: state.totalWorkoutsCompleted + 1,
       totalSecondsSpent: state.totalSecondsSpent + seconds,
       xp: state.xp + earnedXp,
+      weeklyXp: state.weeklyXp + earnedXp,
+      hasXpBoost: false, 
       sessions: newSessions,
       notes: newNotes,
       todayWorkoutsCount: wasCompletedToday ? state.todayWorkoutsCount + 1 : 1,
@@ -382,10 +388,10 @@ Future<void> loadFromCloud() async {
     }
 
     await saveAll();
-    return (leveledUp: level > oldLevel, newAchievements: newlyUnlocked);
+    return (leveledUp: level > oldLevel, newAchievements: newlyUnlocked, boostApplied: boostApplied);
   }
 
-   Future<int> openChest(DailyQuest quest) async {
+  Future<int> openChest(DailyQuest quest) async {
     if (quest.chestRarity == null || quest.isRewardClaimed) {
       return 0;
     }
@@ -407,13 +413,7 @@ Future<void> loadFromCloud() async {
     }
     
     quest.isRewardClaimed = true;
-    
-    // ВОТ ЗДЕСЬ МЫ ДОБАВИЛИ НАЧИСЛЕНИЕ ОПЫТА ЗА КВЕСТ:
-    state = state.copyWith(
-      crystals: state.crystals + gems,
-      xp: state.xp + quest.xpReward, 
-    );
-    
+    state = state.copyWith(crystals: state.crystals + gems, xp: state.xp + quest.xpReward);
     await saveAll();
     return gems;
   }
@@ -448,9 +448,25 @@ Future<void> loadFromCloud() async {
     state = state.copyWith(customWorkoutTypes: newSet, workoutTypeCounts: counts, selectedWorkoutType: type);
     saveAll();
   }
+
+  void updateUserName(String name) {
+    if (name.trim().isEmpty) {
+      return;
+    }
+    state = state.copyWith(userName: name.trim());
+    saveAll();
+  }
+
+  void updateAvatar(int index) {
+    state = state.copyWith(avatarIndex: index);
+    saveAll();
+  }
+
   Future<bool> buyItem(String itemId) async {
     if (itemId == 'freeze') {
-      if (state.crystals < 100) return false;
+      if (state.crystals < 100) {
+        return false;
+      }
       state = state.copyWith(
         crystals: state.crystals - 100,
         streakFreezes: state.streakFreezes + 1,
@@ -460,7 +476,9 @@ Future<void> loadFromCloud() async {
     } 
     
     if (itemId == 'xp_boost') {
-      if (state.crystals < 150 || state.hasXpBoost) return false;
+      if (state.crystals < 150 || state.hasXpBoost) {
+        return false;
+      }
       state = state.copyWith(
         crystals: state.crystals - 150,
         hasXpBoost: true,
@@ -471,40 +489,20 @@ Future<void> loadFromCloud() async {
     
     return false;
   }
-    void updateUserName(String name) {
-    if (name.trim().isEmpty) return;
-    state = state.copyWith(userName: name.trim());
-    saveAll();
-  }
 
-  void updateAvatar(int index) {
-    state = state.copyWith(avatarIndex: index);
-    saveAll();
-  }
   String exportJson() {
     final data = {
-      'streak_count': state.streakCount,
-      'max_streak': state.maxStreak,
-      'streak_freezes': state.streakFreezes,
-      'last_completion_date': state.lastCompletionDate?.toIso8601String(),
-      'today_workouts_count': state.todayWorkoutsCount,
-      'total_workouts_completed': state.totalWorkoutsCompleted,
-      'total_seconds_spent': state.totalSecondsSpent,
-      'xp': state.xp,
-      'crystals': state.crystals,
-      'reminder_hour': state.reminderTime.hour,
-      'reminder_minute': state.reminderTime.minute,
-      'quest_date': state.questDate,
-      'daily_quests': state.dailyQuests.map((q) => q.toJson()).toList(),
-      'selected_workout_type': state.selectedWorkoutType,
-      'sessions': state.sessions.map((s) => s.toJson()).toList(),
-      'notes': state.notes.map((n) => n.toJson()).toList(),
+      'streak_count': state.streakCount, 'max_streak': state.maxStreak, 'streak_freezes': state.streakFreezes,
+      'last_completion_date': state.lastCompletionDate?.toIso8601String(), 'last_gap_processed_date': state.lastGapProcessedDate?.toIso8601String(),
+      'today_workouts_count': state.todayWorkoutsCount, 'total_workouts_completed': state.totalWorkoutsCompleted,
+      'total_seconds_spent': state.totalSecondsSpent, 'xp': state.xp, 'crystals': state.crystals,
+      'weekly_xp': state.weeklyXp, 'has_xp_boost': state.hasXpBoost, 'user_name': state.userName, 'avatar_index': state.avatarIndex,
+      'reminder_hour': state.reminderTime.hour, 'reminder_minute': state.reminderTime.minute, 'quest_date': state.questDate,
+      'daily_quests': state.dailyQuests.map((q) => q.toJson()).toList(), 'selected_workout_type': state.selectedWorkoutType,
+      'sessions': state.sessions.map((s) => s.toJson()).toList(), 'notes': state.notes.map((n) => n.toJson()).toList(),
       'planned_workouts': state.plannedWorkouts.map((k, v) => MapEntry(k.toString(), v)),
-      'custom_workout_types': state.customWorkoutTypes.toList(),
-      'unlocked_achievements': state.unlockedAchievements.toList(),
-      'regular_achievements': state.regularUnlocked.toList(),
-      'workout_type_counts': state.workoutTypeCounts,
-      'weekly_xp': state.weeklyXp,
+      'custom_workout_types': state.customWorkoutTypes.toList(), 'unlocked_achievements': state.unlockedAchievements.toList(),
+      'regular_achievements': state.regularUnlocked.toList(), 'workout_type_counts': state.workoutTypeCounts,
     };
     return const JsonEncoder.withIndent('  ').convert(data);
   }
@@ -512,19 +510,17 @@ Future<void> loadFromCloud() async {
   Future<void> importJson(String jsonString) async {
     final data = jsonDecode(jsonString) as Map<String, dynamic>;
     state = StreakState(
-      streakCount: (data['streak_count'] as num?)?.toInt() ?? 0,
-      maxStreak: (data['max_streak'] as num?)?.toInt() ?? 0,
+      streakCount: (data['streak_count'] as num?)?.toInt() ?? 0, maxStreak: (data['max_streak'] as num?)?.toInt() ?? 0,
       streakFreezes: (data['streak_freezes'] as num?)?.toInt() ?? 1,
       lastCompletionDate: data['last_completion_date'] != null ? DateTime.tryParse(data['last_completion_date']) : null,
+      lastGapProcessedDate: data['last_gap_processed_date'] != null ? DateTime.tryParse(data['last_gap_processed_date']) : null,
       todayWorkoutsCount: (data['today_workouts_count'] as num?)?.toInt() ?? 0,
       totalWorkoutsCompleted: (data['total_workouts_completed'] as num?)?.toInt() ?? 0,
       totalSecondsSpent: (data['total_seconds_spent'] as num?)?.toInt() ?? 0,
-      xp: (data['xp'] as num?)?.toInt() ?? 0,
-      crystals: (data['crystals'] as num?)?.toInt() ?? 0,
-      reminderTime: TimeOfDay(
-        hour: (data['reminder_hour'] as num?)?.toInt() ?? 18,
-        minute: (data['reminder_minute'] as num?)?.toInt() ?? 0,
-      ),
+      xp: (data['xp'] as num?)?.toInt() ?? 0, crystals: (data['crystals'] as num?)?.toInt() ?? 0,
+      weeklyXp: (data['weekly_xp'] as num?)?.toInt() ?? 0, hasXpBoost: data['has_xp_boost'] as bool? ?? false,
+      userName: (data['user_name'] as String?) ?? 'Атлет', avatarIndex: (data['avatar_index'] as num?)?.toInt() ?? 0,
+      reminderTime: TimeOfDay(hour: (data['reminder_hour'] as num?)?.toInt() ?? 18, minute: (data['reminder_minute'] as num?)?.toInt() ?? 0),
       questDate: (data['quest_date'] as String?) ?? '',
       dailyQuests: ((data['daily_quests'] as List?) ?? []).map((e) => DailyQuest.fromJson(e)).toList(),
       selectedWorkoutType: (data['selected_workout_type'] as String?) ?? defaultWorkoutTypes.first,
@@ -535,8 +531,6 @@ Future<void> loadFromCloud() async {
       unlockedAchievements: ((data['unlocked_achievements'] as List?) ?? []).map((e) => e.toString()).toSet(),
       regularUnlocked: ((data['regular_achievements'] as List?) ?? []).map((e) => e.toString()).toSet(),
       workoutTypeCounts: ((data['workout_type_counts'] as Map?) ?? {}).map((k, v) => MapEntry(k.toString(), (v as num).toInt())),
-      weeklyXp: (data['weekly_xp'] as num?)?.toInt() ?? 0,
-    
     );
     await saveAll();
   }

@@ -1,20 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/streak_provider.dart';
 import '../models/achievement.dart';
-import 'shop_screen.dart';
-import '../services/notification_service.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import '../services/auth_service.dart';
+import '../services/notification_service.dart';
+import 'shop_screen.dart';
 
-// Список доступных аватарок
 const List<Map<String, dynamic>> avatars = [
-  {'icon': Icons.fitness_center, 'color': Colors.orange},    // 0
-  {'icon': Icons.directions_run, 'color': Colors.lightBlueAccent}, // 1
-  {'icon': Icons.self_improvement, 'color': Colors.green},   // 2
-  {'icon': Icons.directions_bike, 'color': Colors.purpleAccent}, // 3
-  {'icon': Icons.sports_martial_arts, 'color': Colors.redAccent}, // 4
-  {'icon': Icons.sports_basketball, 'color': Colors.amber},  // 5
+  {'icon': Icons.fitness_center, 'color': Colors.orange},    
+  {'icon': Icons.directions_run, 'color': Colors.lightBlueAccent}, 
+  {'icon': Icons.self_improvement, 'color': Colors.green},   
+  {'icon': Icons.directions_bike, 'color': Colors.purpleAccent}, 
+  {'icon': Icons.sports_martial_arts, 'color': Colors.redAccent}, 
+  {'icon': Icons.sports_basketball, 'color': Colors.amber},  
 ];
 
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -38,6 +37,16 @@ class ProfileScreen extends ConsumerStatefulWidget {
 }
 
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
+  late final Stream<User?> _userStream;
+  late TimeOfDay _localReminderTime;
+
+  @override
+  void initState() {
+    super.initState();
+    _userStream = AuthService().userStream; 
+    _localReminderTime = ref.read(streakProvider).reminderTime;
+  }
+
   String _formatTime(int totalSeconds) {
     final h = totalSeconds ~/ 3600;
     final m = (totalSeconds % 3600) ~/ 60;
@@ -58,17 +67,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           controller: controller,
           maxLength: 15,
           style: const TextStyle(color: Colors.white),
-          decoration: InputDecoration(
-            filled: true, 
-            fillColor: Colors.black26,
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-          ),
+          decoration: InputDecoration(filled: true, fillColor: Colors.black26, border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogCtx),
-            child: const Text('Отмена', style: TextStyle(color: Colors.grey)),
-          ),
+          TextButton(onPressed: () => Navigator.pop(dialogCtx), child: const Text('Отмена', style: TextStyle(color: Colors.grey))),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: widget.primaryColor),
             onPressed: () {
@@ -96,9 +98,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             const Text('Выберите аватар', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
             const SizedBox(height: 20),
             Wrap(
-              spacing: 16,
-              runSpacing: 16,
-              alignment: WrapAlignment.center,
+              spacing: 16, runSpacing: 16, alignment: WrapAlignment.center,
               children: List.generate(avatars.length, (index) {
                 final isSelected = state.avatarIndex == index;
                 final avatar = avatars[index];
@@ -108,8 +108,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     Navigator.pop(sheetCtx);
                   },
                   child: Container(
-                    width: 70,
-                    height: 70,
+                    width: 70, height: 70,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: avatar['color'].withValues(alpha: isSelected ? 0.3 : 0.1),
@@ -131,62 +130,52 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final state = ref.watch(streakProvider);
     final notifier = ref.read(streakProvider.notifier);
     final progress = notifier.levelProgress;
-    final currentAvatar = avatars[state.avatarIndex];
+    final currentAvatar = avatars[state.avatarIndex % avatars.length];
 
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
-      appBar: AppBar(
-        title: const Text('👤 Мой профиль'),
-        centerTitle: true,
-        backgroundColor: const Color(0xFF1E1E1E),
-      ),
+      appBar: AppBar(title: const Text('👤 Мой профиль'), centerTitle: true, backgroundColor: const Color(0xFF1E1E1E)),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           children: [
-            // --- АВАТАР И УРОВЕНЬ ---
-             // --- БЛОК АВТОРИЗАЦИИ ---
+            // --- АВТОРИЗАЦИЯ ---
             StreamBuilder<User?>(
-              stream: AuthService().userStream,
+              stream: _userStream,
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const CircularProgressIndicator();
+                  return const SizedBox(height: 50, child: Center(child: CircularProgressIndicator()));
                 }
                 final user = snapshot.data;
                 if (user == null) {
-                  // Не авторизован
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 24),
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.login),
                       label: const Text('Войти через Google', style: TextStyle(fontSize: 16)),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: Colors.black,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        minimumSize: const Size(double.infinity, 50),
+                        backgroundColor: Colors.white, foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(vertical: 12), minimumSize: const Size(double.infinity, 50),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
                       onPressed: () async {
                         final creds = await AuthService().signInWithGoogle();
                         if (creds != null) {
-                          // При успешном входе подтягиваем данные из облака
                           await ref.read(streakProvider.notifier).loadFromCloud();
                           if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Успешный вход! Прогресс синхронизирован.')),
-                          );
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Успешный вход! Прогресс синхронизирован.')));
                         }
                       },
                     ),
                   );
                 } else {
-                  // Авторизован
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 24),
                     child: Row(
                       children: [
-                        CircleAvatar(backgroundImage: NetworkImage(user.photoURL ?? '')),
+                        user.photoURL != null && user.photoURL!.isNotEmpty
+                            ? CircleAvatar(backgroundImage: NetworkImage(user.photoURL!))
+                            : const CircleAvatar(child: Icon(Icons.person)),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(
@@ -198,9 +187,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                           ),
                         ),
                         TextButton(
-                          onPressed: () async {
-                            await AuthService().signOut();
-                          },
+                          onPressed: () => AuthService().signOut(),
                           child: const Text('Выйти', style: TextStyle(color: Colors.redAccent)),
                         ),
                       ],
@@ -209,61 +196,38 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 }
               },
             ),
-            // --- КОНЕЦ БЛОКА АВТОРИЗАЦИИ ---
+
+            // --- АВАТАР И УРОВЕНЬ ---
             Container(
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [currentAvatar['color'].withValues(alpha: 0.2), Colors.transparent],
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                ),
+                gradient: LinearGradient(colors: [currentAvatar['color'].withValues(alpha: 0.2), Colors.transparent], begin: Alignment.topCenter, end: Alignment.bottomCenter),
                 borderRadius: BorderRadius.circular(24),
                 border: Border.all(color: currentAvatar['color'].withValues(alpha: 0.5)),
               ),
               child: Column(
                 children: [
-                  // Аватар с анимацией
                   GestureDetector(
                     onTap: _showAvatarSelector,
                     child: TweenAnimationBuilder<double>(
-                      tween: Tween(begin: 0.8, end: 1.0),
-                      duration: const Duration(milliseconds: 500),
-                      curve: Curves.easeOutBack,
+                      tween: Tween(begin: 0.8, end: 1.0), duration: const Duration(milliseconds: 500), curve: Curves.easeOutBack,
                       builder: (context, scale, child) => Transform.scale(scale: scale, child: child),
                       child: Stack(
                         alignment: Alignment.bottomRight,
                         children: [
-                          CircleAvatar(
-                            radius: 50,
-                            backgroundColor: currentAvatar['color'].withValues(alpha: 0.2),
-                            child: Icon(currentAvatar['icon'], size: 60, color: currentAvatar['color']),
-                          ),
-                          Container(
-                            padding: const EdgeInsets.all(6),
-                            decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
-                            child: const Icon(Icons.edit, size: 16, color: Colors.white),
-                          ),
+                          CircleAvatar(radius: 50, backgroundColor: currentAvatar['color'].withValues(alpha: 0.2), child: Icon(currentAvatar['icon'], size: 60, color: currentAvatar['color'])),
+                          Container(padding: const EdgeInsets.all(6), decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle), child: const Icon(Icons.edit, size: 16, color: Colors.white)),
                         ],
                       ),
                     ),
                   ),
                   const SizedBox(height: 16),
-                  
-                  // Имя пользователя (кликабельное)
                   GestureDetector(
                     onTap: _showEditNameDialog,
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Flexible( // <--- ДОБАВИТЬ ОБЕРТКУ
-                          child: Text(
-                            state.userName, 
-                            maxLines: 1, // <--- ДОБАВИТЬ (макс 1 строка)
-                            overflow: TextOverflow.ellipsis, // <--- ДОБАВИТЬ (троеточие)
-                            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)
-                          ),
-                        ),
+                        Flexible(child: Text(state.userName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white))),
                         const SizedBox(width: 8),
                         const Icon(Icons.edit, size: 16, color: Colors.white54),
                       ],
@@ -274,15 +238,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   const SizedBox(height: 8),
                   Text('${notifier.currentLevelXp} / ${notifier.requiredLevelXp} XP', style: const TextStyle(color: Colors.white54, fontSize: 14)),
                   const SizedBox(height: 12),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: LinearProgressIndicator(
-                      value: progress,
-                      minHeight: 10,
-                      backgroundColor: Colors.grey[800],
-                      valueColor: AlwaysStoppedAnimation<Color>(widget.secondaryColor),
-                    ),
-                  ),
+                  ClipRRect(borderRadius: BorderRadius.circular(8), child: LinearProgressIndicator(value: progress, minHeight: 10, backgroundColor: Colors.grey[800], valueColor: AlwaysStoppedAnimation<Color>(widget.secondaryColor))),
                 ],
               ),
             ),
@@ -291,21 +247,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             // --- СТАТИСТИКА ---
             const Align(alignment: Alignment.centerLeft, child: Text('📊 Общая статистика', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white))),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(child: _buildStatCard('Тренировок', '${state.totalWorkoutsCompleted}', Icons.fitness_center, widget.primaryColor)),
-                const SizedBox(width: 12),
-                Expanded(child: _buildStatCard('Время', _formatTime(state.totalSecondsSpent), Icons.timer, Colors.lightBlueAccent)),
-              ],
-            ),
+            Row(children: [
+              Expanded(child: _buildStatCard('Тренировок', '${state.totalWorkoutsCompleted}', Icons.fitness_center, widget.primaryColor)),
+              const SizedBox(width: 12),
+              Expanded(child: _buildStatCard('Время', _formatTime(state.totalSecondsSpent), Icons.timer, Colors.lightBlueAccent)),
+            ]),
             const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(child: _buildStatCard('Рекорд стрика', '${state.maxStreak} дн.', Icons.local_fire_department, Colors.orange)),
-                const SizedBox(width: 12),
-                Expanded(child: _buildStatCard('Заморозки', '${state.streakFreezes}', Icons.ac_unit, Colors.lightBlueAccent)),
-              ],
-            ),
+            Row(children: [
+              Expanded(child: _buildStatCard('Рекорд стрика', '${state.maxStreak} дн.', Icons.local_fire_department, Colors.orange)),
+              const SizedBox(width: 12),
+              Expanded(child: _buildStatCard('Заморозки', '${state.streakFreezes}', Icons.ac_unit, Colors.lightBlueAccent)),
+            ]),
             const SizedBox(height: 32),
 
             // --- ДОСТИЖЕНИЯ ---
@@ -315,13 +267,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(color: const Color(0xFF1E1E1E), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey[850]!)),
               child: Wrap(
-                spacing: 16,
-                runSpacing: 16,
-                alignment: WrapAlignment.center,
+                spacing: 16, runSpacing: 16, alignment: WrapAlignment.center,
                 children: notifier.achievements.map((ach) {
-                  final isUnlocked = ach.isSecret 
-                      ? state.unlockedAchievements.contains(ach.id) 
-                      : state.regularUnlocked.contains(ach.id);
+                  final isUnlocked = ach.isSecret ? state.unlockedAchievements.contains(ach.id) : state.regularUnlocked.contains(ach.id);
                   return _buildAchievementBadge(ach, isUnlocked);
                 }).toList(),
               ),
@@ -341,11 +289,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       leading: const Icon(Icons.storefront, color: Colors.greenAccent),
                       title: const Text('Магазин', style: TextStyle(color: Colors.white)),
                       trailing: const Icon(Icons.chevron_right, color: Colors.white54),
-                      onTap: () {
-                        Navigator.push(context, MaterialPageRoute(
-                          builder: (context) => ShopScreen(primaryColor: widget.primaryColor, secondaryColor: widget.secondaryColor),
-                        ));
-                      },
+                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => ShopScreen(primaryColor: widget.primaryColor, secondaryColor: widget.secondaryColor))),
                     ),
                     const Divider(height: 1, color: Colors.black26),
                     ListTile(
@@ -360,12 +304,25 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       title: const Text('Включить уведомления', style: TextStyle(color: Colors.white)),
                       trailing: const Icon(Icons.chevron_right, color: Colors.white54),
                       onTap: () async {
-                     await initNotifications();
-                     showNotification(
-                       '🔥 FitStreak',
-                       'Уведомления включены! Теперь мы не дадим твоему стрику пропасть.',
-                     );
-                   },
+                        await initNotifications();
+                        showNotification('🔥 FitStreak', 'Уведомления включены! Теперь мы не дадим твоему стрику пропасть.');
+                      },
+                    ),
+                    const Divider(height: 1, color: Colors.black26),
+                    ListTile(
+                      leading: const Icon(Icons.access_time, color: Colors.blueAccent),
+                      title: const Text('Время напоминания', style: TextStyle(color: Colors.white)),
+                      trailing: Text('${_localReminderTime.hour.toString().padLeft(2, '0')}:${_localReminderTime.minute.toString().padLeft(2, '0')}', style: TextStyle(color: widget.primaryColor, fontSize: 16, fontWeight: FontWeight.bold)),
+                      onTap: () async {
+                        final picked = await showTimePicker(
+                          context: context, initialTime: _localReminderTime,
+                          builder: (context, child) => Theme(data: ThemeData.dark().copyWith(colorScheme: ColorScheme.dark(primary: widget.primaryColor, onPrimary: Colors.white, surface: const Color(0xFF1E1E1E), onSurface: Colors.white)), child: child!),
+                        );
+                        if (picked != null) {
+                          setState(() => _localReminderTime = picked);
+                          ref.read(streakProvider.notifier).setReminderTime(picked);
+                        }
+                      },
                     ),
                     const Divider(height: 1, color: Colors.black26),
                     ListTile(
@@ -398,28 +355,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       child: Column(
         children: [
           Container(
-            width: 60,
-            height: 60,
+            width: 60, height: 60,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: unlocked ? widget.primaryColor.withValues(alpha: 0.2) : Colors.grey[800],
               border: Border.all(color: unlocked ? widget.primaryColor : Colors.grey[700]!, width: 2),
               boxShadow: unlocked ? [BoxShadow(color: widget.primaryColor.withValues(alpha: 0.3), blurRadius: 8, spreadRadius: 2)] : [],
             ),
-            child: Icon(
-              unlocked ? ach.icon : (ach.isSecret ? Icons.question_mark : Icons.lock_outline),
-              color: unlocked ? widget.primaryColor : Colors.grey[500],
-              size: 28,
-            ),
+            child: Icon(unlocked ? ach.icon : (ach.isSecret ? Icons.question_mark : Icons.lock_outline), color: unlocked ? widget.primaryColor : Colors.grey[500], size: 28),
           ),
           const SizedBox(height: 8),
-          Text(
-            unlocked ? ach.title : (ach.isSecret ? '???' : 'Закрыто'),
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 10, color: unlocked ? Colors.white : Colors.grey[500], fontWeight: unlocked ? FontWeight.bold : FontWeight.normal),
-          ),
+          Text(unlocked ? ach.title : (ach.isSecret ? '???' : 'Закрыто'), textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 10, color: unlocked ? Colors.white : Colors.grey[500], fontWeight: unlocked ? FontWeight.bold : FontWeight.normal)),
         ],
       ),
     );

@@ -15,6 +15,25 @@ subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
+
+// Безопасное принудительное обновление compileSdk для всех плагинов
+subprojects {
+    plugins.withId("com.android.library") {
+        extensions.findByName("android")?.let {
+            if (it is com.android.build.gradle.BaseExtension) {
+                it.compileSdkVersion(36)
+            }
+        }
+    }
+    plugins.withId("com.android.application") {
+        extensions.findByName("android")?.let {
+            if (it is com.android.build.gradle.BaseExtension) {
+                it.compileSdkVersion(36)
+            }
+        }
+    }
+}
+
 subprojects {
     project.evaluationDependsOn(":app")
 }
