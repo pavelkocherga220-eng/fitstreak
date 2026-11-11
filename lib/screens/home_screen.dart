@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart'; // <-- Добавлено для kIsWeb
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -44,6 +44,8 @@ class StreakHomeScreen extends ConsumerStatefulWidget {
 
 class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
   bool _isWorkoutActive = false;
+  bool _isPreparing = false; // <-- Новая переменная для отсчета
+  int _prepareCountdown = 5; // <-- Новая переменная для отсчета
   Timer? _workoutTimer;
 
   String _workoutMode = 'Классический';
@@ -82,8 +84,7 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
     }
   }
 
-  void _startWorkoutTimer() {
-    playSound('start');
+   void _startWorkoutTimer() {
     _totalSecondsSpentInSession = 0;
     _currentRound = 1;
     _isResting = false;
@@ -94,30 +95,50 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
 
     setState(() {
       _isWorkoutActive = true;
+      _isPreparing = true;
+      _prepareCountdown = 5;
     });
 
-    _workoutTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+    // 🔥 Запускаем звук отсчета ОДИН РАЗ (2 глухих + 1 звонкий)
+   playSound('countdown');
+
+    _workoutTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) return;
 
+      // --- ЛОГИКА 3-СЕКУНДНОГО ОТСЧЕТА ---
+      if (_isPreparing) {
+        setState(() {
+          _prepareCountdown--;
+        });
+
+        if (_prepareCountdown <= 0) {
+          setState(() {
+            _isPreparing = false;
+          });
+        }
+        return;
+      }
+      // -------------------------------------
+
+      // --- ОСНОВНАЯ ЛОГИКА ТРЕНИРОВКИ ---
       setState(() {
         _totalSecondsSpentInSession++;
-        
+
         if (_workoutMode != 'Классический') {
           _phaseTimeLeft--;
 
           if (_phaseTimeLeft <= 0) {
-              Vibration.hasVibrator().then((hasVibrator) {
-                debugPrint('Вибратор доступен: $hasVibrator');
-                if (hasVibrator == true) {
-                  // Используем паттерн: вибрировать 500мс, пауза 200мс, вибрировать 500мс
-                  Vibration.vibrate(pattern: [0, 500, 200, 500]);
-                }
-              });
-              playSound('start'); 
+            Vibration.hasVibrator().then((hasVibrator) {
+              if (hasVibrator == true) {
+                Vibration.vibrate(pattern: [0, 500, 200, 500]);
+              }
+            });
+            playSound('beep'); // <-- Короткий бип при смене фазы
+
             if (_isResting) {
               _isResting = false;
               _currentRound++;
-              
+
               if (_currentRound > _intervalRounds) {
                 _finishWorkout();
                 return;
@@ -143,12 +164,16 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Тренировка слишком короткая (менее 10 сек), не засчитана.')));
       }
-      setState(() => _isWorkoutActive = false);
+      setState(() {
+        _isWorkoutActive = false;
+        _isPreparing = false; 
+      });
       return;
     }
 
     setState(() {
       _isWorkoutActive = false;
+      _isPreparing = false; 
     });
 
     final note = await _showNoteInputDialog();
@@ -162,16 +187,13 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
     );
     
     if (!mounted) return;
+    
     if (result.boostApplied) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('⚡ Двойной опыт применен!'), backgroundColor: Colors.amber),
       );
     }
-    
-    if (result.leveledUp) {
-      playSound('achievement');
-      await _showLevelUpDialog();
-    }
+
     if (result.leveledUp) {
       playSound('achievement');
       await _showLevelUpDialog();
@@ -820,24 +842,73 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
             const SizedBox(height: 16),
             Text('🛡️ Заморозок: ${state.streakFreezes}', style: const TextStyle(fontSize: 13, color: Colors.lightBlueAccent)),
             const SizedBox(height: 20),
+            
+            // --- БЛОК ТАЙМЕРА С 3-СЕКУНДНЫМ ОТСЧЕТОМ ---
             if (_isWorkoutActive) ...[
               Container(
                 padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
-                decoration: BoxDecoration(color: _workoutMode != 'Классический' && _isResting ? Colors.blueAccent.withValues(alpha: 0.2) : widget.currentTheme.primary.withValues(alpha: 0.2), border: Border.all(color: _workoutMode != 'Классический' && _isResting ? Colors.blueAccent : widget.currentTheme.primary), borderRadius: BorderRadius.circular(16)),
-                child: Column(children: [
-                  if (_workoutMode != 'Классический') ...[
-                    Text(_isResting ? 'ОТДЫХ' : 'РАБОТА', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _isResting ? Colors.blueAccent : widget.currentTheme.primary, letterSpacing: 2)),
-                    Text('Раунд $_currentRound из $_intervalRounds', style: const TextStyle(fontSize: 12, color: Colors.white54)),
-                    const SizedBox(height: 8),
+                decoration: BoxDecoration(
+                  color: _isPreparing 
+                      ? Colors.orange.withValues(alpha: 0.2) 
+                      : (_workoutMode != 'Классический' && _isResting 
+                          ? Colors.blueAccent.withValues(alpha: 0.2) 
+                          : widget.currentTheme.primary.withValues(alpha: 0.2)), 
+                  border: Border.all(
+                    color: _isPreparing 
+                        ? Colors.orange 
+                        : (_workoutMode != 'Классический' && _isResting 
+                            ? Colors.blueAccent 
+                            : widget.currentTheme.primary)
+                  ), 
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Column(
+                  children: [
+                    if (_isPreparing) ...[
+                      const Text(
+                        'ПРИГОТОВЬТЕСЬ',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.orange, letterSpacing: 2),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '$_prepareCountdown',
+                        style: const TextStyle(fontSize: 64, fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                    ] else ...[
+                      if (_workoutMode != 'Классический') ...[
+                        Text(
+                          _isResting ? 'ОТДЫХ' : 'РАБОТА',
+                          style: TextStyle(
+                            fontSize: 18, 
+                            fontWeight: FontWeight.bold, 
+                            color: _isResting ? Colors.blueAccent : widget.currentTheme.primary,
+                            letterSpacing: 2,
+                          ),
+                        ),
+                        Text('Раунд $_currentRound из $_intervalRounds', style: const TextStyle(fontSize: 12, color: Colors.white54)),
+                        const SizedBox(height: 8),
+                      ],
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.timer, color: _isResting ? Colors.blueAccent : widget.currentTheme.primary, size: 32),
+                          const SizedBox(width: 12),
+                          Text(
+                            _workoutMode == 'Классический' 
+                                ? _formatTime(_totalSecondsSpentInSession)
+                                : _formatTime(_phaseTimeLeft),
+                            style: const TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 2),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
-                  Row(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.timer, color: _isResting ? Colors.blueAccent : widget.currentTheme.primary, size: 32), const SizedBox(width: 12),
-                    Text(_workoutMode == 'Классический' ? _formatTime(_totalSecondsSpentInSession) : _formatTime(_phaseTimeLeft), style: const TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 2)),
-                  ]),
-                ]),
+                ),
               ),
               const SizedBox(height: 20),
             ],
+            // ------------------------------------------
+
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: List.generate(_weekDays.length, (index) {

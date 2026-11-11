@@ -36,7 +36,7 @@ dependencies:
   hive: ^2.2.3              
   hive_flutter: ^1.1.0
   flutter_animate: ^4.5.0
-  audioplayers: ^6.0.0
+  just_audio: ^0.9.36
   flutter_local_notifications: ^17.2.2
   home_widget: ^0.10.0
   firebase_core: ^3.1.1
