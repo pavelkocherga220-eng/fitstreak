@@ -10,21 +10,19 @@ import 'screens/home_screen.dart';
 import 'services/notification_service.dart';
 
 void main() async {
-  // Обязательная инициализация для Hive и Flutter
   WidgetsFlutterBinding.ensureInitialized();
-  await Hive.initFlutter();
   
-  // Инициализируем Firebase только для мобильных платформ (Android/iOS).
-  // Для Web-версии мы временно отключаем его, чтобы не было белого экрана,
-  // так как google-services.json не содержит конфигурации для веба.
+  // Инициализация локальной базы данных
+  await Hive.initFlutter();
+
+  // Firebase и нативные уведомления работают только на мобильных платформах
   if (!kIsWeb) {
     await Firebase.initializeApp();
+    await initNotifications(); // инициализация каналов и разрешений
   } else {
-    debugPrint('Web версия: Firebase отключен (нет конфигурации для Web)');
+    debugPrint('Web версия: Firebase и уведомления отключены');
   }
 
-  await initNotifications();
-  
   runApp(const ProviderScope(child: FitStreakApp()));
 }
 
@@ -39,9 +37,24 @@ class _FitStreakAppState extends State<FitStreakApp> {
   int _selectedThemeIndex = 0;
 
   final List<AppThemeData> _themes = const [
-    AppThemeData(name: 'Классический огонь 🔥', primary: Colors.orange, secondary: Colors.deepOrange, background: Color(0xFF121212)),
-    AppThemeData(name: 'Неоновый киберпанк ⚡', primary: Colors.purpleAccent, secondary: Colors.cyanAccent, background: Color(0xFF0F0C1B)),
-    AppThemeData(name: 'Лесная свежесть 🌿', primary: Colors.teal, secondary: Colors.green, background: Color(0xFF0A140E)),
+    AppThemeData(
+      name: 'Классический огонь 🔥',
+      primary: Colors.orange,
+      secondary: Colors.deepOrange,
+      background: Color(0xFF121212),
+    ),
+    AppThemeData(
+      name: 'Неоновый киберпанк ⚡',
+      primary: Colors.purpleAccent,
+      secondary: Colors.cyanAccent,
+      background: Color(0xFF0F0C1B),
+    ),
+    AppThemeData(
+      name: 'Лесная свежесть 🌿',
+      primary: Colors.teal,
+      secondary: Colors.green,
+      background: Color(0xFF0A140E),
+    ),
   ];
 
   @override

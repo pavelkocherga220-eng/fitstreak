@@ -87,10 +87,9 @@ class StreakNotifier extends Notifier<StreakState> {
           hasXpBoost: data['has_xp_boost'] as bool? ?? false,
           userName: (data['user_name'] as String?) ?? 'Атлет',
           avatarIndex: (data['avatar_index'] as num?)?.toInt() ?? 0,
-          reminderTime: TimeOfDay(
-            hour: (data['reminder_hour'] as num?)?.toInt() ?? 18,
-            minute: (data['reminder_minute'] as num?)?.toInt() ?? 0,
-          ),
+          reminderTimes: ((data['reminder_times'] as List?) ?? [])
+              .map((e) => TimeOfDay(hour: e['hour'], minute: e['minute']))
+              .toList(),
           questDate: (data['quest_date'] as String?) ?? '',
           dailyQuests: ((data['daily_quests'] as List?) ?? []).map((e) => DailyQuest.fromJson(Map<String, dynamic>.from(e))).toList(),
           selectedWorkoutType: (data['selected_workout_type'] as String?) ?? defaultWorkoutTypes.first,
@@ -134,8 +133,7 @@ class StreakNotifier extends Notifier<StreakState> {
       'has_xp_boost': state.hasXpBoost,
       'user_name': state.userName,
       'avatar_index': state.avatarIndex,
-      'reminder_hour': state.reminderTime.hour,
-      'reminder_minute': state.reminderTime.minute,
+      'reminder_times': state.reminderTimes.map((t) => {'hour': t.hour, 'minute': t.minute}).toList(),
       'quest_date': state.questDate,
       'daily_quests': state.dailyQuests.map((q) => q.toJson()).toList(),
       'selected_workout_type': state.selectedWorkoutType,
@@ -150,17 +148,18 @@ class StreakNotifier extends Notifier<StreakState> {
     
     await box.put('fitstreak_data', data);
 
-    if (Firebase.apps.isEmpty) return; 
+    if (Firebase.apps.isEmpty) {
+      return; 
+    }
+
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
       try {
-        // 1. Приватные данные
         await FirebaseFirestore.instance
             .collection('users')
             .doc(user.uid)
             .set(data, SetOptions(merge: true)); 
             
-        // 2. Публичные данные для лидерборда
         await FirebaseFirestore.instance
             .collection('leaderboard')
             .doc(user.uid)
@@ -176,9 +175,13 @@ class StreakNotifier extends Notifier<StreakState> {
   }
 
   Future<void> loadFromCloud() async {
-    if (Firebase.apps.isEmpty) return;
+    if (Firebase.apps.isEmpty) {
+      return;
+    }
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    if (user == null) {
+      return;
+    }
 
     try {
       final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
@@ -336,7 +339,6 @@ class StreakNotifier extends Notifier<StreakState> {
     int baseXp = 10 + (seconds ~/ 60) * 10;
     int earnedXp = baseXp;
     bool boostApplied = state.hasXpBoost;
-    
     if (boostApplied) {
       earnedXp *= 2;
     }
@@ -425,8 +427,8 @@ class StreakNotifier extends Notifier<StreakState> {
     return gems;
   }
   
-  void setReminderTime(TimeOfDay time) {
-    state = state.copyWith(reminderTime: time);
+  void setReminderTimes(List<TimeOfDay> times) {
+    state = state.copyWith(reminderTimes: times);
     saveAll();
   }
 
@@ -513,8 +515,7 @@ class StreakNotifier extends Notifier<StreakState> {
       'has_xp_boost': state.hasXpBoost,
       'user_name': state.userName,
       'avatar_index': state.avatarIndex,
-      'reminder_hour': state.reminderTime.hour,
-      'reminder_minute': state.reminderTime.minute,
+      'reminder_times': state.reminderTimes.map((t) => {'hour': t.hour, 'minute': t.minute}).toList(),
       'quest_date': state.questDate,
       'daily_quests': state.dailyQuests.map((q) => q.toJson()).toList(),
       'selected_workout_type': state.selectedWorkoutType,
@@ -546,10 +547,9 @@ class StreakNotifier extends Notifier<StreakState> {
       hasXpBoost: data['has_xp_boost'] as bool? ?? false,
       userName: (data['user_name'] as String?) ?? 'Атлет',
       avatarIndex: (data['avatar_index'] as num?)?.toInt() ?? 0,
-      reminderTime: TimeOfDay(
-        hour: (data['reminder_hour'] as num?)?.toInt() ?? 18,
-        minute: (data['reminder_minute'] as num?)?.toInt() ?? 0,
-      ),
+      reminderTimes: ((data['reminder_times'] as List?) ?? [])
+          .map((e) => TimeOfDay(hour: e['hour'], minute: e['minute']))
+          .toList(),
       questDate: (data['quest_date'] as String?) ?? '',
       dailyQuests: ((data['daily_quests'] as List?) ?? []).map((e) => DailyQuest.fromJson(Map<String, dynamic>.from(e))).toList(),
       selectedWorkoutType: (data['selected_workout_type'] as String?) ?? defaultWorkoutTypes.first,

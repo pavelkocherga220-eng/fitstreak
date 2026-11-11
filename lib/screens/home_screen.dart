@@ -63,7 +63,11 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
   void initState() {
     super.initState();
     initNotifications();
-    Future.delayed(const Duration(seconds: 2), _checkSmartReminder);
+    Future.delayed(const Duration(seconds: 2), () {
+      final state = ref.read(streakProvider);
+      scheduleReminders(state.reminderTimes); // <-- Планируем напоминания при старте
+      _checkSmartReminder();
+    });
   }
 
   @override
@@ -72,15 +76,18 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
     super.dispose();
   }
 
-  void _checkSmartReminder() {
+   void _checkSmartReminder() {
     if (!mounted) return;
     final state = ref.read(streakProvider);
     final now = DateTime.now();
     final currentMinutes = now.hour * 60 + now.minute;
-    final targetMinutes = state.reminderTime.hour * 60 + state.reminderTime.minute;
-
-    if (currentMinutes >= targetMinutes && !_isSameDay(state.lastCompletionDate, now)) {
-      showNotification('⚠️ Стрик под угрозой!', 'Ты еще не тренировался сегодня. Самое время размяться! 🔥');
+    
+    for (final time in state.reminderTimes) {
+       final targetMinutes = time.hour * 60 + time.minute;
+       if (currentMinutes >= targetMinutes && !_isSameDay(state.lastCompletionDate, now)) {
+          showNotification('⚠️ Стрик под угрозой!', 'Ты еще не тренировался сегодня. Самое время размяться! 🔥');
+          break; // Показываем только одно уведомление
+       }
     }
   }
 

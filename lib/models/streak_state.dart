@@ -14,9 +14,9 @@ class StreakState {
   final int totalSecondsSpent;
   final int xp;
   final int crystals;
-  final int weeklyXp; // <-- НОВАЯ ПЕРЕМЕННАЯ
+  final int weeklyXp;
   final bool hasXpBoost;
-  final TimeOfDay reminderTime;
+  final List<TimeOfDay> reminderTimes; // <-- список
   final List<DailyQuest> dailyQuests;
   final String questDate;
   final String selectedWorkoutType;
@@ -27,8 +27,6 @@ class StreakState {
   final Set<String> unlockedAchievements;
   final Set<String> regularUnlocked;
   final Map<String, int> workoutTypeCounts;
-
-  // Данные профиля
   final String userName;
   final int avatarIndex;
 
@@ -43,9 +41,9 @@ class StreakState {
     this.totalSecondsSpent = 0,
     this.xp = 0,
     this.crystals = 0,
-    this.weeklyXp = 0, // <-- ДОБАВЛЕНО В КОНСТРУКТОР
+    this.weeklyXp = 0,
     this.hasXpBoost = false,
-    this.reminderTime = const TimeOfDay(hour: 18, minute: 0),
+    this.reminderTimes = const [TimeOfDay(hour: 19, minute: 30)], // <-- по умолчанию
     this.dailyQuests = const [],
     this.questDate = '',
     this.selectedWorkoutType = 'Силовая',
@@ -71,9 +69,9 @@ class StreakState {
     int? totalSecondsSpent,
     int? xp,
     int? crystals,
-    int? weeklyXp, // <-- ДОБАВЛЕНО
+    int? weeklyXp,
     bool? hasXpBoost,
-    TimeOfDay? reminderTime,
+    List<TimeOfDay>? reminderTimes, // <-- список
     List<DailyQuest>? dailyQuests,
     String? questDate,
     String? selectedWorkoutType,
@@ -98,9 +96,9 @@ class StreakState {
       totalSecondsSpent: totalSecondsSpent ?? this.totalSecondsSpent,
       xp: xp ?? this.xp,
       crystals: crystals ?? this.crystals,
-      weeklyXp: weeklyXp ?? this.weeklyXp, // <-- ДОБАВЛЕНО
+      weeklyXp: weeklyXp ?? this.weeklyXp,
       hasXpBoost: hasXpBoost ?? this.hasXpBoost,
-      reminderTime: reminderTime ?? this.reminderTime,
+      reminderTimes: reminderTimes ?? this.reminderTimes,
       dailyQuests: dailyQuests ?? this.dailyQuests,
       questDate: questDate ?? this.questDate,
       selectedWorkoutType: selectedWorkoutType ?? this.selectedWorkoutType,

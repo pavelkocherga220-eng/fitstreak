@@ -38,13 +38,11 @@ class ProfileScreen extends ConsumerStatefulWidget {
 
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   late final Stream<User?> _userStream;
-  late TimeOfDay _localReminderTime;
 
   @override
   void initState() {
     super.initState();
     _userStream = AuthService().userStream; 
-    _localReminderTime = ref.read(streakProvider).reminderTime;
   }
 
   String _formatTime(int totalSeconds) {
@@ -301,29 +299,46 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     const Divider(height: 1, color: Colors.black26),
                     ListTile(
                       leading: const Icon(Icons.notifications_active, color: Colors.amberAccent),
-                      title: const Text('Включить уведомления', style: TextStyle(color: Colors.white)),
-                      trailing: const Icon(Icons.chevron_right, color: Colors.white54),
-                      onTap: () async {
-                        await initNotifications();
-                        showNotification('🔥 FitStreak', 'Уведомления включены! Теперь мы не дадим твоему стрику пропасть.');
-                      },
+                      title: const Text('Напоминания', style: TextStyle(color: Colors.white)),
+                      subtitle: Text(
+                        state.reminderTimes.map((t) => '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}').join(', '),
+                        style: const TextStyle(color: Colors.white70, fontSize: 13),
+                      ),
+                      trailing: IconButton(
+                        icon: Icon(Icons.add, color: widget.primaryColor),
+                        onPressed: () async {
+                          final picked = await showTimePicker(
+                            context: context,
+                            initialTime: const TimeOfDay(hour: 12, minute: 0),
+                            builder: (context, child) => Theme(
+                              data: ThemeData.dark().copyWith(
+                                colorScheme: ColorScheme.dark(primary: widget.primaryColor, onPrimary: Colors.white, surface: const Color(0xFF1E1E1E), onSurface: Colors.white),
+                              ),
+                              child: child!,
+                            ),
+                          );
+                          if (picked != null) {
+                            final newTimes = [...state.reminderTimes, picked]..sort((a, b) => (a.hour * 60 + a.minute).compareTo(b.hour * 60 + b.minute));
+                            ref.read(streakProvider.notifier).setReminderTimes(newTimes);
+                            await scheduleReminders(newTimes);
+                          }
+                        },
+                      ),
                     ),
-                    const Divider(height: 1, color: Colors.black26),
-                    ListTile(
-                      leading: const Icon(Icons.access_time, color: Colors.blueAccent),
-                      title: const Text('Время напоминания', style: TextStyle(color: Colors.white)),
-                      trailing: Text('${_localReminderTime.hour.toString().padLeft(2, '0')}:${_localReminderTime.minute.toString().padLeft(2, '0')}', style: TextStyle(color: widget.primaryColor, fontSize: 16, fontWeight: FontWeight.bold)),
-                      onTap: () async {
-                        final picked = await showTimePicker(
-                          context: context, initialTime: _localReminderTime,
-                          builder: (context, child) => Theme(data: ThemeData.dark().copyWith(colorScheme: ColorScheme.dark(primary: widget.primaryColor, onPrimary: Colors.white, surface: const Color(0xFF1E1E1E), onSurface: Colors.white)), child: child!),
-                        );
-                        if (picked != null) {
-                          setState(() => _localReminderTime = picked);
-                          ref.read(streakProvider.notifier).setReminderTime(picked);
-                        }
-                      },
-                    ),
+                    ...state.reminderTimes.map((time) {
+                      return ListTile(
+                        leading: const SizedBox(width: 24),
+                        title: Text('${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}', style: const TextStyle(color: Colors.white)),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.redAccent, size: 20),
+                          onPressed: () {
+                            final newTimes = state.reminderTimes.where((t) => t != time).toList();
+                            ref.read(streakProvider.notifier).setReminderTimes(newTimes);
+                            scheduleReminders(newTimes);
+                          },
+                        ),
+                      );
+                    }),
                     const Divider(height: 1, color: Colors.black26),
                     ListTile(
                       leading: const Icon(Icons.upload, color: Colors.greenAccent),
