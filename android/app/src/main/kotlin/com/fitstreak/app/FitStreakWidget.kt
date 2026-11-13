@@ -1,4 +1,4 @@
-package com.example.flutter_application_1
+package com.fitstreak.app
 
 import android.appwidget.AppWidgetManager
 import android.content.Context
@@ -15,26 +15,24 @@ class FitStreakWidget : HomeWidgetProvider() {
         widgetData: SharedPreferences
     ) {
         appWidgetIds.forEach { widgetId ->
-            // Берем НОВЫЙ макет (widget_layout)
             val views = RemoteViews(context.packageName, R.layout.widget_layout)
-            
-            // Достаем путь к картинке
             val imagePath = widgetData.getString("widget_image", null)
-            
+
             if (imagePath != null) {
                 val imageFile = File(imagePath)
                 if (imageFile.exists()) {
                     try {
                         val authority = "${context.packageName}.fileprovider"
-                        val uri = androidx.core.content.FileProvider.getUriForFile(context, authority, imageFile)
+                        val uri = androidx.core.content.FileProvider.getUriForFile(
+                            context, authority, imageFile
+                        )
                         views.setImageViewUri(R.id.widget_image, uri)
                     } catch (e: Exception) {
-                        // Логируем ошибку, чтобы понять, что не так
                         e.printStackTrace()
                     }
                 }
             }
-            
+
             appWidgetManager.updateAppWidget(widgetId, views)
         }
     }

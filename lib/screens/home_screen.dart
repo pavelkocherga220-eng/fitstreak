@@ -44,8 +44,9 @@ class StreakHomeScreen extends ConsumerStatefulWidget {
 
 class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
   bool _isWorkoutActive = false;
-  bool _isPreparing = false; // <-- Новая переменная для отсчета
-  int _prepareCountdown = 5; // <-- Новая переменная для отсчета
+  bool _isPreparing = false;
+  int _prepareCountdown = 5;
+  DateTime? _workoutStartTime; // <-- время реального старта (после подготовки)
   Timer? _workoutTimer;
 
   String _workoutMode = 'Классический';
@@ -78,32 +79,35 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
     });
   }
 
-
   @override
   void dispose() {
     _workoutTimer?.cancel();
     super.dispose();
   }
 
-   void _checkSmartReminder() {
+  void _checkSmartReminder() {
     if (!mounted) return;
     final state = ref.read(streakProvider);
     final now = DateTime.now();
     final currentMinutes = now.hour * 60 + now.minute;
-    
+
     for (final time in state.reminderTimes) {
-       final targetMinutes = time.hour * 60 + time.minute;
-       if (currentMinutes >= targetMinutes && !_isSameDay(state.lastCompletionDate, now)) {
-          showNotification('⚠️ Стрик под угрозой!', 'Ты еще не тренировался сегодня. Самое время размяться! 🔥');
-          break; // Показываем только одно уведомление
-       }
+      final targetMinutes = time.hour * 60 + time.minute;
+      if (currentMinutes >= targetMinutes &&
+          !_isSameDay(state.lastCompletionDate, now)) {
+        showNotification('⚠️ Стрик под угрозой!',
+            'Ты еще не тренировался сегодня. Самое время размяться! 🔥');
+        break;
+      }
     }
   }
 
-   void _startWorkoutTimer() {
+  void _startWorkoutTimer() {
+    playSound('countdown');
     _totalSecondsSpentInSession = 0;
     _currentRound = 1;
     _isResting = false;
+    _workoutStartTime = null;
 
     if (_workoutMode != 'Классический') {
       _phaseTimeLeft = _intervalWorkTime;
@@ -115,30 +119,31 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
       _prepareCountdown = 5;
     });
 
-    // 🔥 Запускаем звук отсчета ОДИН РАЗ (2 глухих + 1 звонкий)
-   playSound('countdown');
-
     _workoutTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) return;
 
-      // --- ЛОГИКА 3-СЕКУНДНОГО ОТСЧЕТА ---
+      // --- 5-СЕКУНДНАЯ ПОДГОТОВКА ---
       if (_isPreparing) {
         setState(() {
           _prepareCountdown--;
-        });
-
-        if (_prepareCountdown <= 0) {
-          setState(() {
+          if (_prepareCountdown <= 0) {
             _isPreparing = false;
-          });
-        }
+            _workoutStartTime = DateTime.now(); // счёт начинается сейчас
+          }
+        });
         return;
       }
-      // -------------------------------------
+      // --------------------------------
 
-      // --- ОСНОВНАЯ ЛОГИКА ТРЕНИРОВКИ ---
+      // --- ОСНОВНАЯ ТРЕНИРОВКА ---
       setState(() {
-        _totalSecondsSpentInSession++;
+        // Точный подсчёт секунд по реальному времени
+        if (_workoutStartTime != null) {
+          _totalSecondsSpentInSession =
+              DateTime.now().difference(_workoutStartTime!).inSeconds;
+        } else {
+          _totalSecondsSpentInSession++;
+        }
 
         if (_workoutMode != 'Классический') {
           _phaseTimeLeft--;
@@ -149,7 +154,7 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
                 Vibration.vibrate(pattern: [0, 500, 200, 500]);
               }
             });
-            playSound('beep'); // <-- Короткий бип при смене фазы
+            playSound('beep');
 
             if (_isResting) {
               _isResting = false;
@@ -173,23 +178,26 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
   Future<void> _finishWorkout() async {
     _workoutTimer?.cancel();
     playSound('finish');
-    
+
     final sessionSeconds = _totalSecondsSpentInSession;
-    
+
     if (sessionSeconds < 10) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Тренировка слишком короткая (менее 10 сек), не засчитана.')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Тренировка слишком короткая (менее 10 сек), не засчитана.')));
       }
       setState(() {
         _isWorkoutActive = false;
-        _isPreparing = false; 
+        _isPreparing = false;
+        _workoutStartTime = null;
       });
       return;
     }
 
     setState(() {
       _isWorkoutActive = false;
-      _isPreparing = false; 
+      _isPreparing = false;
+      _workoutStartTime = null;
     });
 
     final note = await _showNoteInputDialog();
@@ -197,13 +205,13 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
 
     final state = ref.read(streakProvider);
     final result = await ref.read(streakProvider.notifier).finishWorkout(
-      sessionSeconds, 
-      note ?? '', 
-      type: state.selectedWorkoutType
+      sessionSeconds,
+      note ?? '',
+      type: state.selectedWorkoutType,
     );
-    
+
     if (!mounted) return;
-    
+
     if (result.boostApplied) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('⚡ Двойной опыт применен!'), backgroundColor: Colors.amber),
@@ -214,7 +222,7 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
       playSound('achievement');
       await _showLevelUpDialog();
     }
-    
+
     for (var ach in result.newAchievements) {
       if (!mounted) break;
       playSound('achievement');
@@ -232,7 +240,7 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
         builder: (_, setModalState) {
           final currentState = ref.watch(streakProvider);
           final notifier = ref.read(streakProvider.notifier);
-          
+
           return Padding(
             padding: EdgeInsets.only(bottom: MediaQuery.of(sheetCtx).viewInsets.bottom),
             child: SingleChildScrollView(
@@ -268,7 +276,7 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
                         labelStyle: TextStyle(color: isSelected ? Colors.white : Colors.white70, fontWeight: FontWeight.bold),
                         onSelected: (_) {
                           notifier.selectWorkoutType(type);
-                          setModalState(() {}); 
+                          setModalState(() {});
                         },
                       );
                     }).toList(),
@@ -316,8 +324,8 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
                     width: double.infinity,
                     child: ElevatedButton.icon(
                       onPressed: () {
-                        Navigator.pop(sheetCtx); 
-                        _startWorkoutTimer(); 
+                        Navigator.pop(sheetCtx);
+                        _startWorkoutTimer();
                       },
                       icon: const Icon(Icons.play_arrow),
                       label: const Text('Поехали!'),
@@ -406,10 +414,10 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
   void _openChest(DailyQuest quest) async {
     final gems = await ref.read(streakProvider.notifier).openChest(quest);
     if (gems == 0 || !mounted) return;
-    
+
     playSound('achievement');
     Color color = quest.chestRarity == ChestRarity.legendary ? Colors.amber : quest.chestRarity == ChestRarity.epic ? Colors.purpleAccent : quest.chestRarity == ChestRarity.rare ? Colors.blueAccent : Colors.grey[400]!;
-    
+
     showDialog(
       context: context,
       builder: (dialogCtx) => AlertDialog(
@@ -858,24 +866,24 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
             const SizedBox(height: 16),
             Text('🛡️ Заморозок: ${state.streakFreezes}', style: const TextStyle(fontSize: 13, color: Colors.lightBlueAccent)),
             const SizedBox(height: 20),
-            
-            // --- БЛОК ТАЙМЕРА С 3-СЕКУНДНЫМ ОТСЧЕТОМ ---
+
+            // --- ТАЙМЕР ---
             if (_isWorkoutActive) ...[
               Container(
                 padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
                 decoration: BoxDecoration(
-                  color: _isPreparing 
-                      ? Colors.orange.withValues(alpha: 0.2) 
-                      : (_workoutMode != 'Классический' && _isResting 
-                          ? Colors.blueAccent.withValues(alpha: 0.2) 
-                          : widget.currentTheme.primary.withValues(alpha: 0.2)), 
+                  color: _isPreparing
+                      ? Colors.orange.withValues(alpha: 0.2)
+                      : (_workoutMode != 'Классический' && _isResting
+                          ? Colors.blueAccent.withValues(alpha: 0.2)
+                          : widget.currentTheme.primary.withValues(alpha: 0.2)),
                   border: Border.all(
-                    color: _isPreparing 
-                        ? Colors.orange 
-                        : (_workoutMode != 'Классический' && _isResting 
-                            ? Colors.blueAccent 
-                            : widget.currentTheme.primary)
-                  ), 
+                    color: _isPreparing
+                        ? Colors.orange
+                        : (_workoutMode != 'Классический' && _isResting
+                            ? Colors.blueAccent
+                            : widget.currentTheme.primary),
+                  ),
                   borderRadius: BorderRadius.circular(16),
                 ),
                 child: Column(
@@ -895,8 +903,8 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
                         Text(
                           _isResting ? 'ОТДЫХ' : 'РАБОТА',
                           style: TextStyle(
-                            fontSize: 18, 
-                            fontWeight: FontWeight.bold, 
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
                             color: _isResting ? Colors.blueAccent : widget.currentTheme.primary,
                             letterSpacing: 2,
                           ),
@@ -910,7 +918,7 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
                           Icon(Icons.timer, color: _isResting ? Colors.blueAccent : widget.currentTheme.primary, size: 32),
                           const SizedBox(width: 12),
                           Text(
-                            _workoutMode == 'Классический' 
+                            _workoutMode == 'Классический'
                                 ? _formatTime(_totalSecondsSpentInSession)
                                 : _formatTime(_phaseTimeLeft),
                             style: const TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 2),
@@ -923,7 +931,7 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
               ),
               const SizedBox(height: 20),
             ],
-            // ------------------------------------------
+            // -----------------
 
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -964,9 +972,19 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
             }),
             const SizedBox(height: 32),
             Text(
-              _isWorkoutActive ? '⚡ Идёт тренировка «${state.selectedWorkoutType}»...' : (_isSameDay(state.lastCompletionDate, DateTime.now()) ? '🎉 Тренировка «${state.selectedWorkoutType}» засчитана!' : '💪 Готовы к тренировке?'),
+              _isWorkoutActive
+                  ? '⚡ Идёт тренировка «${state.selectedWorkoutType}»...'
+                  : (_isSameDay(state.lastCompletionDate, DateTime.now())
+                      ? '🎉 Тренировка «${state.selectedWorkoutType}» засчитана!'
+                      : '💪 Готовы к тренировке?'),
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 16, color: _isWorkoutActive ? widget.currentTheme.primary : (_isSameDay(state.lastCompletionDate, DateTime.now()) ? Colors.greenAccent : Colors.white70), fontWeight: FontWeight.w500),
+              style: TextStyle(
+                fontSize: 16,
+                color: _isWorkoutActive
+                    ? widget.currentTheme.primary
+                    : (_isSameDay(state.lastCompletionDate, DateTime.now()) ? Colors.greenAccent : Colors.white70),
+                fontWeight: FontWeight.w500,
+              ),
             ),
             const SizedBox(height: 20),
             if (!_isWorkoutActive)
