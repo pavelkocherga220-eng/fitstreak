@@ -66,11 +66,19 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     // initNotifications() уже вызван в main.dart — здесь не дублируем.
-    // Планируем reminders после того, как провайдер загрузит Hive.
-    Future.delayed(const Duration(seconds: 3), _afterStateLoaded);
+    _onAppStart();
   }
 
-  Future<void> _afterStateLoaded() async {
+  // Ждём реальной загрузки Hive (а не фиксированную задержку), затем
+  // планируем напоминания и один раз проверяем «стрик под угрозой».
+  Future<void> _onAppStart() async {
+    await ref.read(streakProvider.notifier).ready;
+    if (!mounted) return;
+    await _rescheduleReminders();
+    _checkSmartReminder();
+  }
+
+  Future<void> _rescheduleReminders() async {
     if (!mounted) return;
     final state = ref.read(streakProvider);
     try {
@@ -78,7 +86,6 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
     } catch (e) {
       debugPrint('scheduleReminders error: $e');
     }
-    _checkSmartReminder();
   }
 
   @override
@@ -93,8 +100,11 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
     super.didChangeAppLifecycleState(state);
     if (state == AppLifecycleState.resumed) {
       // Смена дня / недели / квестов / заморозок после сворачивания
-      ref.read(streakProvider.notifier).reloadState();
-      _afterStateLoaded();
+      // Без smart-проверки: пользователь уже в приложении, уведомление было бы спамом
+      () async {
+        await ref.read(streakProvider.notifier).reloadState();
+        await _rescheduleReminders();
+      }();
     }
   }
 
@@ -1231,6 +1241,50 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
     return result;
   }
 
+  Widget _buildLoadFailedBanner() {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.red.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.redAccent),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('⚠️ Не удалось прочитать сохранённые данные',
+              style: TextStyle(
+                  color: Colors.white, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          const Text(
+              'Прогресс в этой сессии не сохраняется, чтобы не затереть старые данные. '
+              'Скопируйте резервную копию и сохраните её, затем восстановите через импорт.',
+              style: TextStyle(color: Colors.white70, fontSize: 13)),
+          const SizedBox(height: 8),
+          TextButton.icon(
+            icon: const Icon(Icons.copy, size: 18),
+            label: const Text('Скопировать резервную копию'),
+            onPressed: () async {
+              final messenger = ScaffoldMessenger.of(context);
+              final json =
+                  await ref.read(streakProvider.notifier).readBackupJson();
+              if (json == null) {
+                messenger.showSnackBar(
+                    const SnackBar(content: Text('Резервная копия не найдена')));
+                return;
+              }
+              await Clipboard.setData(ClipboardData(text: json));
+              messenger.showSnackBar(
+                  const SnackBar(content: Text('Резервная копия скопирована')));
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(streakProvider);
@@ -1375,6 +1429,7 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+            if (ref.watch(loadFailedProvider)) _buildLoadFailedBanner(),
             Align(
               alignment: Alignment.centerLeft,
               child: Padding(

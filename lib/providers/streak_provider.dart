@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
@@ -15,12 +16,24 @@ import '../models/workout_session.dart';
 
 final streakProvider = NotifierProvider<StreakNotifier, StreakState>(StreakNotifier.new);
 
+/// true, если локальные данные не удалось прочитать (сохранение заблокировано).
+final loadFailedProvider = StateProvider<bool>((ref) => false);
+
 class StreakNotifier extends Notifier<StreakState> {
   static const List<String> defaultWorkoutTypes = ['Силовая', 'Кардио', 'Йога', 'Растяжка'];
 
   // Флаг: если парсинг при загрузке упал — блокируем saveAll
   bool _loadFailed = false;
   bool get loadFailed => _loadFailed;
+
+  // Завершается, когда первичная загрузка из Hive закончилась (успешно или нет)
+  final Completer<void> _ready = Completer<void>();
+  Future<void> get ready => _ready.future;
+
+  void _setLoadFailed(bool value) {
+    _loadFailed = value;
+    ref.read(loadFailedProvider.notifier).state = value;
+  }
 
   final List<Achievement> achievements = const [
     Achievement(id: 'first', title: 'Первый шаг', description: 'Завершите 1 тренировку', icon: Icons.flag, requiredStreak: 1),
@@ -95,12 +108,23 @@ class StreakNotifier extends Notifier<StreakState> {
   // ============================================================
 
   Future<void> _loadData() async {
+    try {
+      await _loadDataImpl();
+    } catch (e) {
+      debugPrint('Ошибка открытия хранилища: $e');
+      _setLoadFailed(true);
+    } finally {
+      if (!_ready.isCompleted) _ready.complete();
+    }
+  }
+
+  Future<void> _loadDataImpl() async {
     final box = await Hive.openBox('fitstreak_box');
     final raw = box.get('fitstreak_data');
 
     if (raw == null) {
       // Первый запуск — дефолтное состояние, всё ок
-      _loadFailed = false;
+      _setLoadFailed(false);
       processGapIfNeeded();
       generateDailyQuests();
       return;
@@ -109,13 +133,13 @@ class StreakNotifier extends Notifier<StreakState> {
     try {
       final data = Map<String, dynamic>.from(raw);
       state = StreakState.fromJson(data);
-      _loadFailed = false;
+      _setLoadFailed(false);
     } catch (e) {
       // Сохраняем сырые данные в резервный ключ,
       // чтобы не потерять их при последующих saveAll
       debugPrint('Ошибка парсинга данных. Сохраняем backup и НЕ перезаписываем: $e');
       await box.put('fitstreak_data_backup', raw);
-      _loadFailed = true;
+      _setLoadFailed(true);
       return; // Не вызываем processGap/quests/saveAll — ждём ручного разбора
     }
 
@@ -566,13 +590,28 @@ class StreakNotifier extends Notifier<StreakState> {
   // ЭКСПОРТ / ИМПОРТ
   // ============================================================
 
+  /// Сырые данные, сохранённые при ошибке загрузки (или null)
+  Future<String?> readBackupJson() async {
+    try {
+      final box = await Hive.openBox('fitstreak_box');
+      final raw = box.get('fitstreak_data_backup');
+      if (raw == null) return null;
+      return const JsonEncoder.withIndent('  ').convert(raw);
+    } catch (e) {
+      debugPrint('Не удалось прочитать бэкап: $e');
+      return null;
+    }
+  }
+
   String exportJson() {
     return const JsonEncoder.withIndent('  ').convert(state.toJson());
   }
 
   Future<void> importJson(String jsonString) async {
     final data = jsonDecode(jsonString) as Map<String, dynamic>;
-    state = StreakState.fromJson(data);
+    final imported = StreakState.fromJson(data); // бросит исключение до изменения state
+    state = imported;
+    _setLoadFailed(false); // импорт — осознанное восстановление, разблокируем сохранение
     _checkWeekReset();
     await saveAll();
   }
