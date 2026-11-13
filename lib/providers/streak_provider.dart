@@ -35,13 +35,36 @@ class StreakNotifier extends Notifier<StreakState> {
 
   List<String> get workoutTypes => [...defaultWorkoutTypes, ...state.customWorkoutTypes];
 
+  // ============================================================
+  // МИГРАЦИЯ НАПОМИНАНИЙ
+  // ============================================================
+
+  List<TimeOfDay> _migrateReminderTimes(Map<String, dynamic> data) {
+    final list = (data['reminder_times'] as List?) ?? [];
+    if (list.isNotEmpty) {
+      return list
+          .map((e) => TimeOfDay(hour: e['hour'], minute: e['minute']))
+          .toList();
+    }
+
+    // миграция со старого формата (одно время)
+    final h = (data['reminder_hour'] as num?)?.toInt();
+    final m = (data['reminder_minute'] as num?)?.toInt();
+    if (h != null && m != null) {
+      return [TimeOfDay(hour: h, minute: m)];
+    }
+
+    // значение по умолчанию
+    return const [TimeOfDay(hour: 19, minute: 30)];
+  }
+
+  // ============================================================
+  // УРОВНИ И ОПЫТ
+  // ============================================================
+
   int _getXpRequirement(int level) {
-    if (level <= 10) {
-      return level * 100;
-    }
-    if (level <= 20) {
-      return 1000 + (level - 10) * 500;
-    }
+    if (level <= 10) return level * 100;
+    if (level <= 20) return 1000 + (level - 10) * 500;
     return 6000 + (level - 20) * 1000;
   }
 
@@ -64,6 +87,10 @@ class StreakNotifier extends Notifier<StreakState> {
   int get requiredLevelXp => levelInfo.requiredXp;
   double get levelProgress => currentLevelXp / requiredLevelXp;
 
+  // ============================================================
+  // ЗАГРУЗКА И СОХРАНЕНИЕ
+  // ============================================================
+
   Future<void> _loadData() async {
     final box = await Hive.openBox('fitstreak_box');
     final raw = box.get('fitstreak_data');
@@ -76,8 +103,12 @@ class StreakNotifier extends Notifier<StreakState> {
           streakCount: (data['streak_count'] as num?)?.toInt() ?? 0,
           maxStreak: (data['max_streak'] as num?)?.toInt() ?? 0,
           streakFreezes: (data['streak_freezes'] as num?)?.toInt() ?? 1,
-          lastCompletionDate: data['last_completion_date'] != null ? DateTime.tryParse(data['last_completion_date']) : null,
-          lastGapProcessedDate: data['last_gap_processed_date'] != null ? DateTime.tryParse(data['last_gap_processed_date']) : null,
+          lastCompletionDate: data['last_completion_date'] != null
+              ? DateTime.tryParse(data['last_completion_date'])
+              : null,
+          lastGapProcessedDate: data['last_gap_processed_date'] != null
+              ? DateTime.tryParse(data['last_gap_processed_date'])
+              : null,
           todayWorkoutsCount: (data['today_workouts_count'] as num?)?.toInt() ?? 0,
           totalWorkoutsCompleted: (data['total_workouts_completed'] as num?)?.toInt() ?? 0,
           totalSecondsSpent: (data['total_seconds_spent'] as num?)?.toInt() ?? 0,
@@ -87,24 +118,36 @@ class StreakNotifier extends Notifier<StreakState> {
           hasXpBoost: data['has_xp_boost'] as bool? ?? false,
           userName: (data['user_name'] as String?) ?? 'Атлет',
           avatarIndex: (data['avatar_index'] as num?)?.toInt() ?? 0,
-          reminderTimes: ((data['reminder_times'] as List?) ?? [])
-              .map((e) => TimeOfDay(hour: e['hour'], minute: e['minute']))
-              .toList(),
+          reminderTimes: _migrateReminderTimes(data),
           questDate: (data['quest_date'] as String?) ?? '',
-          dailyQuests: ((data['daily_quests'] as List?) ?? []).map((e) => DailyQuest.fromJson(Map<String, dynamic>.from(e))).toList(),
+          dailyQuests: ((data['daily_quests'] as List?) ?? [])
+              .map((e) => DailyQuest.fromJson(Map<String, dynamic>.from(e)))
+              .toList(),
           selectedWorkoutType: (data['selected_workout_type'] as String?) ?? defaultWorkoutTypes.first,
-          sessions: ((data['sessions'] as List?) ?? []).map((e) => WorkoutSession.fromJson(Map<String, dynamic>.from(e))).toList(),
-          notes: ((data['notes'] as List?) ?? []).map((e) => WorkoutNote.fromJson(Map<String, dynamic>.from(e))).toList(),
-          plannedWorkouts: ((data['planned_workouts'] as Map?) ?? {}).map((k, v) => MapEntry(int.parse(k.toString()), v.toString())),
-          customWorkoutTypes: ((data['custom_workout_types'] as List?) ?? []).map((e) => e.toString()).toSet(),
-          unlockedAchievements: ((data['unlocked_achievements'] as List?) ?? []).map((e) => e.toString()).toSet(),
-          regularUnlocked: ((data['regular_achievements'] as List?) ?? []).map((e) => e.toString()).toSet(),
-          workoutTypeCounts: ((data['workout_type_counts'] as Map?) ?? {}).map((k, v) => MapEntry(k.toString(), (v as num).toInt())),
+          sessions: ((data['sessions'] as List?) ?? [])
+              .map((e) => WorkoutSession.fromJson(Map<String, dynamic>.from(e)))
+              .toList(),
+          notes: ((data['notes'] as List?) ?? [])
+              .map((e) => WorkoutNote.fromJson(Map<String, dynamic>.from(e)))
+              .toList(),
+          plannedWorkouts: ((data['planned_workouts'] as Map?) ?? {})
+              .map((k, v) => MapEntry(int.parse(k.toString()), v.toString())),
+          customWorkoutTypes: ((data['custom_workout_types'] as List?) ?? [])
+              .map((e) => e.toString())
+              .toSet(),
+          unlockedAchievements: ((data['unlocked_achievements'] as List?) ?? [])
+              .map((e) => e.toString())
+              .toSet(),
+          regularUnlocked: ((data['regular_achievements'] as List?) ?? [])
+              .map((e) => e.toString())
+              .toSet(),
+          workoutTypeCounts: ((data['workout_type_counts'] as Map?) ?? {})
+              .map((k, v) => MapEntry(k.toString(), (v as num).toInt())),
         );
         loadedSuccessfully = true;
       } catch (e) {
         debugPrint('Ошибка загрузки данных (не перезаписываем!): $e');
-        return; 
+        return; // НЕ вызываем saveAll, чтобы не стереть базу
       }
     } else {
       loadedSuccessfully = true;
@@ -133,7 +176,9 @@ class StreakNotifier extends Notifier<StreakState> {
       'has_xp_boost': state.hasXpBoost,
       'user_name': state.userName,
       'avatar_index': state.avatarIndex,
-      'reminder_times': state.reminderTimes.map((t) => {'hour': t.hour, 'minute': t.minute}).toList(),
+      'reminder_times': state.reminderTimes
+          .map((t) => {'hour': t.hour, 'minute': t.minute})
+          .toList(),
       'quest_date': state.questDate,
       'daily_quests': state.dailyQuests.map((q) => q.toJson()).toList(),
       'selected_workout_type': state.selectedWorkoutType,
@@ -145,12 +190,10 @@ class StreakNotifier extends Notifier<StreakState> {
       'regular_achievements': state.regularUnlocked.toList(),
       'workout_type_counts': state.workoutTypeCounts,
     };
-    
+
     await box.put('fitstreak_data', data);
 
-    if (Firebase.apps.isEmpty) {
-      return; 
-    }
+    if (Firebase.apps.isEmpty) return;
 
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
@@ -158,8 +201,8 @@ class StreakNotifier extends Notifier<StreakState> {
         await FirebaseFirestore.instance
             .collection('users')
             .doc(user.uid)
-            .set(data, SetOptions(merge: true)); 
-            
+            .set(data, SetOptions(merge: true));
+
         await FirebaseFirestore.instance
             .collection('leaderboard')
             .doc(user.uid)
@@ -175,21 +218,20 @@ class StreakNotifier extends Notifier<StreakState> {
   }
 
   Future<void> loadFromCloud() async {
-    if (Firebase.apps.isEmpty) {
-      return;
-    }
+    if (Firebase.apps.isEmpty) return;
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      return;
-    }
+    if (user == null) return;
 
     try {
-      final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
       if (doc.exists && doc.data() != null) {
         final cloudData = doc.data()!;
         final box = await Hive.openBox('fitstreak_box');
         await box.put('fitstreak_data', cloudData);
-        await _loadData(); 
+        await _loadData();
         debugPrint('Данные успешно загружены из облака');
       } else {
         await saveAll();
@@ -200,19 +242,21 @@ class StreakNotifier extends Notifier<StreakState> {
     }
   }
 
+  // ============================================================
+  // СТРИКИ И ЗАМОРОЗКИ
+  // ============================================================
+
   void processGapIfNeeded() {
-    if (state.lastCompletionDate == null) {
-      return;
-    }
+    if (state.lastCompletionDate == null) return;
 
     DateTime dateOnly(DateTime d) => DateTime.utc(d.year, d.month, d.day);
     final today = dateOnly(DateTime.now());
     final lastDay = dateOnly(state.lastCompletionDate!);
-    
+
     final charged = state.lastGapProcessedDate == null
         ? lastDay
         : dateOnly(state.lastGapProcessedDate!).subtract(const Duration(days: 1));
-        
+
     final anchor = charged.isAfter(lastDay) ? charged : lastDay;
     final missed = today.difference(anchor).inDays - 1;
 
@@ -228,27 +272,30 @@ class StreakNotifier extends Notifier<StreakState> {
         newFreezes = 0;
         newPlanned.clear();
       }
-      
+
       state = state.copyWith(
         streakCount: newStreak,
         streakFreezes: newFreezes,
         plannedWorkouts: newPlanned,
         lastGapProcessedDate: today,
-        todayWorkoutsCount: 0, 
+        todayWorkoutsCount: 0,
       );
       saveAll();
-    } else if (state.lastGapProcessedDate == null || !dateOnly(state.lastGapProcessedDate!).isAtSameMomentAs(today)) {
+    } else if (state.lastGapProcessedDate == null ||
+        !dateOnly(state.lastGapProcessedDate!).isAtSameMomentAs(today)) {
       state = state.copyWith(lastGapProcessedDate: today);
       saveAll();
     }
   }
 
+  // ============================================================
+  // КВЕСТЫ
+  // ============================================================
+
   void generateDailyQuests() {
     final now = DateTime.now();
     final todayStr = '${now.year}-${now.month}-${now.day}';
-    if (state.questDate == todayStr && state.dailyQuests.length == 3) {
-      return;
-    }
+    if (state.questDate == todayStr && state.dailyQuests.length == 3) return;
 
     final pool = [
       {'id': 'min_15', 'title': 'Тренируйся 15 минут', 'xp': 50},
@@ -263,7 +310,7 @@ class StreakNotifier extends Notifier<StreakState> {
       DailyQuest(id: pool[0]['id'] as String, title: pool[0]['title'] as String, xpReward: pool[0]['xp'] as int),
       DailyQuest(id: pool[1]['id'] as String, title: pool[1]['title'] as String, xpReward: pool[1]['xp'] as int),
     ];
-    
+
     final randomType = workoutTypes[Random().nextInt(workoutTypes.length)];
     newQuests.add(DailyQuest(id: 'type_$randomType', title: 'Попробуй тип "$randomType"', xpReward: 50));
 
@@ -274,15 +321,15 @@ class StreakNotifier extends Notifier<StreakState> {
   void evaluateQuests() {
     bool changed = false;
     final today = DateTime.now();
-    final todaySessions = state.sessions.where((s) => s.date.year == today.year && s.date.month == today.month && s.date.day == today.day).toList();
+    final todaySessions = state.sessions
+        .where((s) => s.date.year == today.year && s.date.month == today.month && s.date.day == today.day)
+        .toList();
     final todaySeconds = todaySessions.fold(0, (total, s) => total + s.durationSeconds);
     final todayCount = todaySessions.length;
 
     final updatedQuests = state.dailyQuests.map((quest) {
-      if (quest.isCompleted) {
-        return quest;
-      }
-      
+      if (quest.isCompleted) return quest;
+
       bool completed = false;
       if (quest.id == 'min_15') {
         completed = todaySeconds >= 15 * 60;
@@ -322,30 +369,31 @@ class StreakNotifier extends Notifier<StreakState> {
     }
   }
 
-  Future<({bool leveledUp, List<Achievement> newAchievements, bool boostApplied})> finishWorkout(int seconds, String note, {required String type}) async {
+  // ============================================================
+  // ЗАВЕРШЕНИЕ ТРЕНИРОВКИ
+  // ============================================================
+
+  Future<({bool leveledUp, List<Achievement> newAchievements, bool boostApplied})>
+      finishWorkout(int seconds, String note, {required String type}) async {
     final oldLevel = level;
     final now = DateTime.now();
-    final wasCompletedToday = state.lastCompletionDate != null && 
+    final wasCompletedToday = state.lastCompletionDate != null &&
         state.lastCompletionDate!.year == now.year &&
         state.lastCompletionDate!.month == now.month &&
         state.lastCompletionDate!.day == now.day;
 
     final newSession = WorkoutSession(date: now, type: type, durationSeconds: seconds);
     final newSessions = [...state.sessions, newSession];
-    if (newSessions.length > 365) {
-      newSessions.removeAt(0);
-    }
+    if (newSessions.length > 365) newSessions.removeAt(0);
 
     int baseXp = 10 + (seconds ~/ 60) * 10;
     int earnedXp = baseXp;
     bool boostApplied = state.hasXpBoost;
-    if (boostApplied) {
-      earnedXp *= 2;
-    }
+    if (boostApplied) earnedXp *= 2;
 
-    final newNotes = note.trim().isNotEmpty 
-      ? [WorkoutNote(type: type, text: note.trim(), date: now), ...state.notes]
-      : state.notes;
+    final newNotes = note.trim().isNotEmpty
+        ? [WorkoutNote(type: type, text: note.trim(), date: now), ...state.notes]
+        : state.notes;
 
     final counts = Map<String, int>.from(state.workoutTypeCounts);
     counts[type] = (counts[type] ?? 0) + 1;
@@ -357,7 +405,7 @@ class StreakNotifier extends Notifier<StreakState> {
       totalSecondsSpent: state.totalSecondsSpent + seconds,
       xp: state.xp + earnedXp,
       weeklyXp: state.weeklyXp + earnedXp,
-      hasXpBoost: false, 
+      hasXpBoost: false,
       sessions: newSessions,
       notes: newNotes,
       todayWorkoutsCount: wasCompletedToday ? state.todayWorkoutsCount + 1 : 1,
@@ -365,21 +413,19 @@ class StreakNotifier extends Notifier<StreakState> {
     );
 
     evaluateQuests();
-    
+
     final newlyUnlocked = <Achievement>[];
     final nowTime = DateTime.now();
-    
+
     final regUnlocked = Set<String>.from(state.regularUnlocked);
     for (var ach in achievements) {
-      if (ach.isSecret) {
-        continue;
-      }
+      if (ach.isSecret) continue;
       if (state.streakCount >= ach.requiredStreak && !regUnlocked.contains(ach.id)) {
         regUnlocked.add(ach.id);
         newlyUnlocked.add(ach);
       }
     }
-    
+
     final secUnlocked = Set<String>.from(state.unlockedAchievements);
     if ((nowTime.hour >= 22 || nowTime.hour < 4) && !secUnlocked.contains('night_owl')) {
       secUnlocked.add('night_owl');
@@ -391,7 +437,7 @@ class StreakNotifier extends Notifier<StreakState> {
     }
 
     state = state.copyWith(regularUnlocked: regUnlocked, unlockedAchievements: secUnlocked);
-    
+
     if (state.streakCount > state.maxStreak) {
       state = state.copyWith(maxStreak: state.streakCount);
     }
@@ -400,11 +446,13 @@ class StreakNotifier extends Notifier<StreakState> {
     return (leveledUp: level > oldLevel, newAchievements: newlyUnlocked, boostApplied: boostApplied);
   }
 
+  // ============================================================
+  // СУНДУКИ И МАГАЗИН
+  // ============================================================
+
   Future<int> openChest(DailyQuest quest) async {
-    if (quest.chestRarity == null || quest.isRewardClaimed) {
-      return 0;
-    }
-    
+    if (quest.chestRarity == null || quest.isRewardClaimed) return 0;
+
     int gems = 0;
     switch (quest.chestRarity!) {
       case ChestRarity.common:
@@ -420,13 +468,38 @@ class StreakNotifier extends Notifier<StreakState> {
         gems = 200 + Random().nextInt(101);
         break;
     }
-    
+
     quest.isRewardClaimed = true;
     state = state.copyWith(crystals: state.crystals + gems, xp: state.xp + quest.xpReward);
     await saveAll();
     return gems;
   }
-  
+
+  Future<bool> buyItem(String itemId) async {
+    if (itemId == 'freeze') {
+      if (state.crystals < 100) return false;
+      state = state.copyWith(
+        crystals: state.crystals - 100,
+        streakFreezes: state.streakFreezes + 1,
+      );
+      await saveAll();
+      return true;
+    }
+
+    if (itemId == 'xp_boost') {
+      if (state.crystals < 150 || state.hasXpBoost) return false;
+      state = state.copyWith(crystals: state.crystals - 150, hasXpBoost: true);
+      await saveAll();
+      return true;
+    }
+
+    return false;
+  }
+
+  // ============================================================
+  // ПРОЧИЕ СЕТТЕРЫ
+  // ============================================================
+
   void setReminderTimes(List<TimeOfDay> times) {
     state = state.copyWith(reminderTimes: times);
     saveAll();
@@ -449,9 +522,7 @@ class StreakNotifier extends Notifier<StreakState> {
   }
 
   void addCustomWorkoutType(String type) {
-    if (type.isEmpty || workoutTypes.contains(type)) {
-      return;
-    }
+    if (type.isEmpty || workoutTypes.contains(type)) return;
     final newSet = Set<String>.from(state.customWorkoutTypes)..add(type);
     final counts = Map<String, int>.from(state.workoutTypeCounts)..[type] = 0;
     state = state.copyWith(customWorkoutTypes: newSet, workoutTypeCounts: counts, selectedWorkoutType: type);
@@ -459,9 +530,7 @@ class StreakNotifier extends Notifier<StreakState> {
   }
 
   void updateUserName(String name) {
-    if (name.trim().isEmpty) {
-      return;
-    }
+    if (name.trim().isEmpty) return;
     state = state.copyWith(userName: name.trim());
     saveAll();
   }
@@ -471,33 +540,9 @@ class StreakNotifier extends Notifier<StreakState> {
     saveAll();
   }
 
-  Future<bool> buyItem(String itemId) async {
-    if (itemId == 'freeze') {
-      if (state.crystals < 100) {
-        return false;
-      }
-      state = state.copyWith(
-        crystals: state.crystals - 100,
-        streakFreezes: state.streakFreezes + 1,
-      );
-      await saveAll();
-      return true;
-    } 
-    
-    if (itemId == 'xp_boost') {
-      if (state.crystals < 150 || state.hasXpBoost) {
-        return false;
-      }
-      state = state.copyWith(
-        crystals: state.crystals - 150,
-        hasXpBoost: true,
-      );
-      await saveAll();
-      return true;
-    }
-    
-    return false;
-  }
+  // ============================================================
+  // ЭКСПОРТ / ИМПОРТ
+  // ============================================================
 
   String exportJson() {
     final data = {
@@ -515,7 +560,9 @@ class StreakNotifier extends Notifier<StreakState> {
       'has_xp_boost': state.hasXpBoost,
       'user_name': state.userName,
       'avatar_index': state.avatarIndex,
-      'reminder_times': state.reminderTimes.map((t) => {'hour': t.hour, 'minute': t.minute}).toList(),
+      'reminder_times': state.reminderTimes
+          .map((t) => {'hour': t.hour, 'minute': t.minute})
+          .toList(),
       'quest_date': state.questDate,
       'daily_quests': state.dailyQuests.map((q) => q.toJson()).toList(),
       'selected_workout_type': state.selectedWorkoutType,
@@ -536,8 +583,12 @@ class StreakNotifier extends Notifier<StreakState> {
       streakCount: (data['streak_count'] as num?)?.toInt() ?? 0,
       maxStreak: (data['max_streak'] as num?)?.toInt() ?? 0,
       streakFreezes: (data['streak_freezes'] as num?)?.toInt() ?? 1,
-      lastCompletionDate: data['last_completion_date'] != null ? DateTime.tryParse(data['last_completion_date']) : null,
-      lastGapProcessedDate: data['last_gap_processed_date'] != null ? DateTime.tryParse(data['last_gap_processed_date']) : null,
+      lastCompletionDate: data['last_completion_date'] != null
+          ? DateTime.tryParse(data['last_completion_date'])
+          : null,
+      lastGapProcessedDate: data['last_gap_processed_date'] != null
+          ? DateTime.tryParse(data['last_gap_processed_date'])
+          : null,
       todayWorkoutsCount: (data['today_workouts_count'] as num?)?.toInt() ?? 0,
       totalWorkoutsCompleted: (data['total_workouts_completed'] as num?)?.toInt() ?? 0,
       totalSecondsSpent: (data['total_seconds_spent'] as num?)?.toInt() ?? 0,
@@ -547,19 +598,31 @@ class StreakNotifier extends Notifier<StreakState> {
       hasXpBoost: data['has_xp_boost'] as bool? ?? false,
       userName: (data['user_name'] as String?) ?? 'Атлет',
       avatarIndex: (data['avatar_index'] as num?)?.toInt() ?? 0,
-      reminderTimes: ((data['reminder_times'] as List?) ?? [])
-          .map((e) => TimeOfDay(hour: e['hour'], minute: e['minute']))
-          .toList(),
+      reminderTimes: _migrateReminderTimes(data),
       questDate: (data['quest_date'] as String?) ?? '',
-      dailyQuests: ((data['daily_quests'] as List?) ?? []).map((e) => DailyQuest.fromJson(Map<String, dynamic>.from(e))).toList(),
+      dailyQuests: ((data['daily_quests'] as List?) ?? [])
+          .map((e) => DailyQuest.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
       selectedWorkoutType: (data['selected_workout_type'] as String?) ?? defaultWorkoutTypes.first,
-      sessions: ((data['sessions'] as List?) ?? []).map((e) => WorkoutSession.fromJson(Map<String, dynamic>.from(e))).toList(),
-      notes: ((data['notes'] as List?) ?? []).map((e) => WorkoutNote.fromJson(Map<String, dynamic>.from(e))).toList(),
-      plannedWorkouts: ((data['planned_workouts'] as Map?) ?? {}).map((k, v) => MapEntry(int.parse(k.toString()), v.toString())),
-      customWorkoutTypes: ((data['custom_workout_types'] as List?) ?? []).map((e) => e.toString()).toSet(),
-      unlockedAchievements: ((data['unlocked_achievements'] as List?) ?? []).map((e) => e.toString()).toSet(),
-      regularUnlocked: ((data['regular_achievements'] as List?) ?? []).map((e) => e.toString()).toSet(),
-      workoutTypeCounts: ((data['workout_type_counts'] as Map?) ?? {}).map((k, v) => MapEntry(k.toString(), (v as num).toInt())),
+      sessions: ((data['sessions'] as List?) ?? [])
+          .map((e) => WorkoutSession.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
+      notes: ((data['notes'] as List?) ?? [])
+          .map((e) => WorkoutNote.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
+      plannedWorkouts: ((data['planned_workouts'] as Map?) ?? {})
+          .map((k, v) => MapEntry(int.parse(k.toString()), v.toString())),
+      customWorkoutTypes: ((data['custom_workout_types'] as List?) ?? [])
+          .map((e) => e.toString())
+          .toSet(),
+      unlockedAchievements: ((data['unlocked_achievements'] as List?) ?? [])
+          .map((e) => e.toString())
+          .toSet(),
+      regularUnlocked: ((data['regular_achievements'] as List?) ?? [])
+          .map((e) => e.toString())
+          .toSet(),
+      workoutTypeCounts: ((data['workout_type_counts'] as Map?) ?? {})
+          .map((k, v) => MapEntry(k.toString(), (v as num).toInt())),
     );
     await saveAll();
   }

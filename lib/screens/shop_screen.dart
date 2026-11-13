@@ -54,7 +54,7 @@ class ShopScreen extends ConsumerWidget {
           const SizedBox(height: 16),
           _buildShopItem(
             context: context,
-            title: 'Двойной опыт (24ч) ⚡',
+            title: 'Двойной опыт (одна тренировка) ⚡',
             description: 'Следующая тренировка принесет в 2 раза больше XP.',
             price: 150,
             icon: Icons.flash_on,

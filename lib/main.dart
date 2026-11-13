@@ -11,16 +11,19 @@ import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // Инициализация локальной базы данных
   await Hive.initFlutter();
 
-  // Firebase и нативные уведомления работают только на мобильных платформах
   if (!kIsWeb) {
-    await Firebase.initializeApp();
-    await initNotifications(); // инициализация каналов и разрешений
-  } else {
-    debugPrint('Web версия: Firebase и уведомления отключены');
+    try {
+      await Firebase.initializeApp();
+    } catch (e) {
+      debugPrint('Firebase init failed: $e');
+    }
+    try {
+      await initNotifications();
+    } catch (e) {
+      debugPrint('Notifications init failed: $e');
+    }
   }
 
   runApp(const ProviderScope(child: FitStreakApp()));

@@ -8,7 +8,11 @@ class LeagueScreen extends ConsumerWidget {
   final Color primaryColor;
   final Color secondaryColor;
 
-  const LeagueScreen({super.key, required this.primaryColor, required this.secondaryColor});
+  const LeagueScreen({
+    super.key,
+    required this.primaryColor,
+    required this.secondaryColor,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -24,7 +28,7 @@ class LeagueScreen extends ConsumerWidget {
       ),
       body: Column(
         children: [
-          // Шапка лиги
+          // ==================== ШАПКА ====================
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(24),
@@ -39,10 +43,19 @@ class LeagueScreen extends ConsumerWidget {
               children: [
                 const Icon(Icons.emoji_events, size: 60, color: Colors.amber),
                 const SizedBox(height: 8),
-                const Text('Бронзовая лига', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white)),
-                const Text('Топ-3 переходят в Серебряную лигу', style: TextStyle(fontSize: 12, color: Colors.white70)),
+                const Text(
+                  'Бронзовая лига',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+                const Text(
+                  'Топ-3 переходят в Серебряную лигу',
+                  style: TextStyle(fontSize: 12, color: Colors.white70),
+                ),
                 const SizedBox(height: 16),
-                // Ваше место (для наглядности)
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(
@@ -59,23 +72,62 @@ class LeagueScreen extends ConsumerWidget {
             ),
           ),
 
-          // Список лидеров
+          // ==================== СПИСОК ЛИДЕРОВ ====================
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              // Берем топ-30 пользователей по общему XP
               stream: FirebaseFirestore.instance
                   .collection('leaderboard')
                   .orderBy('xp', descending: true)
                   .limit(30)
                   .snapshots(),
               builder: (context, snapshot) {
+                // 1. Обработка ошибок (нет интернета, permission-denied и т.д.)
+                if (snapshot.hasError) {
+                  return Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.cloud_off, size: 64, color: Colors.white38),
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Не удалось загрузить лигу.\nПроверьте подключение к интернету.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.white70, fontSize: 15),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '${snapshot.error}',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.white30, fontSize: 11),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
+                // 2. Загрузка
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 }
+
+                // 3. Пустой результат (нет данных)
                 if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return const Center(child: Text('Пока нет участников. Начните тренироваться!', style: TextStyle(color: Colors.white54)));
+                  return const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Center(
+                      child: Text(
+                        'Пока нет участников.\nНачните тренироваться и станьте первым!',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white54, fontSize: 15),
+                      ),
+                    ),
+                  );
                 }
 
+                // 4. Список лидеров
                 final users = snapshot.data!.docs;
 
                 return ListView.builder(
@@ -84,20 +136,34 @@ class LeagueScreen extends ConsumerWidget {
                   itemBuilder: (context, index) {
                     final data = users[index].data() as Map<String, dynamic>;
                     final isMe = currentUser != null && users[index].id == currentUser.uid;
-                    
-                    // Цвета для топ-3
+
+                    // Цвета и иконки для топ-3
                     Color rankColor = Colors.white70;
                     IconData? medalIcon;
-                    if (index == 0) { rankColor = Colors.amber; medalIcon = Icons.military_tech; }
-                    else if (index == 1) { rankColor = Colors.grey[300]!; medalIcon = Icons.military_tech; }
-                    else if (index == 2) { rankColor = Colors.brown[300]!; medalIcon = Icons.military_tech; }
+                    if (index == 0) {
+                      rankColor = Colors.amber;
+                      medalIcon = Icons.military_tech;
+                    } else if (index == 1) {
+                      rankColor = Colors.grey[300]!;
+                      medalIcon = Icons.military_tech;
+                    } else if (index == 2) {
+                      rankColor = Colors.brown[300]!;
+                      medalIcon = Icons.military_tech;
+                    }
+
+                    final name = (data['user_name'] as String? ?? 'Атлет');
+                    final xp = (data['xp'] as num?)?.toInt() ?? 0;
 
                     return Container(
                       margin: const EdgeInsets.only(bottom: 8),
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                       decoration: BoxDecoration(
-                        color: isMe ? primaryColor.withValues(alpha: 0.15) : const Color(0xFF1E1E1E),
-                        border: Border.all(color: isMe ? primaryColor : Colors.grey[850]!),
+                        color: isMe
+                            ? primaryColor.withValues(alpha: 0.15)
+                            : const Color(0xFF1E1E1E),
+                        border: Border.all(
+                          color: isMe ? primaryColor : Colors.grey[850]!,
+                        ),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Row(
@@ -105,27 +171,37 @@ class LeagueScreen extends ConsumerWidget {
                           // Место
                           SizedBox(
                             width: 30,
-                            child: medalIcon != null 
-                              ? Icon(medalIcon, color: rankColor)
-                              : Text('${index + 1}', style: TextStyle(color: rankColor, fontWeight: FontWeight.bold, fontSize: 16)),
+                            child: medalIcon != null
+                                ? Icon(medalIcon, color: rankColor)
+                                : Text(
+                                    '${index + 1}',
+                                    style: TextStyle(
+                                      color: rankColor,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                    ),
+                                  ),
                           ),
                           const SizedBox(width: 12),
-                          
-                          // Аватарка
+
+                          // Аватар (первая буква имени)
                           CircleAvatar(
                             radius: 20,
                             backgroundColor: Colors.grey[800],
                             child: Text(
-                              (data['user_name'] as String? ?? 'A')[0].toUpperCase(),
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                              name.isNotEmpty ? name[0].toUpperCase() : 'A',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
                           const SizedBox(width: 12),
-                          
+
                           // Имя
                           Expanded(
                             child: Text(
-                              data['user_name'] as String? ?? 'Атлет',
+                              isMe ? '$name (вы)' : name,
                               style: TextStyle(
                                 color: isMe ? primaryColor : Colors.white,
                                 fontWeight: isMe ? FontWeight.bold : FontWeight.normal,
@@ -135,11 +211,15 @@ class LeagueScreen extends ConsumerWidget {
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                          
+
                           // XP
                           Text(
-                            '${data['xp'] ?? 0} XP',
-                            style: TextStyle(color: Colors.amberAccent, fontWeight: FontWeight.bold, fontSize: 14),
+                            '$xp XP',
+                            style: const TextStyle(
+                              color: Colors.amberAccent,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
                           ),
                         ],
                       ),

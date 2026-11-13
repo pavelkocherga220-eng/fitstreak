@@ -62,13 +62,22 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen> {
   @override
   void initState() {
     super.initState();
-    initNotifications();
-    Future.delayed(const Duration(seconds: 2), () {
-      final state = ref.read(streakProvider);
-      scheduleReminders(state.reminderTimes); // <-- Планируем напоминания при старте
+    Future.delayed(const Duration(seconds: 2), () async {
+      try {
+        initNotifications();
+      } catch (e) {
+        debugPrint('initNotifications error: $e');
+      }
+      try {
+        final state = ref.read(streakProvider);
+        await scheduleReminders(state.reminderTimes);
+      } catch (e) {
+        debugPrint('scheduleReminders error: $e');
+      }
       _checkSmartReminder();
     });
   }
+
 
   @override
   void dispose() {
