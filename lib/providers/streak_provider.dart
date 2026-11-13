@@ -17,7 +17,11 @@ final streakProvider = NotifierProvider<StreakNotifier, StreakState>(StreakNotif
 
 class StreakNotifier extends Notifier<StreakState> {
   static const List<String> defaultWorkoutTypes = ['Силовая', 'Кардио', 'Йога', 'Растяжка'];
-  
+
+  // Флаг: если парсинг при загрузке упал — блокируем saveAll
+  bool _loadFailed = false;
+  bool get loadFailed => _loadFailed;
+
   final List<Achievement> achievements = const [
     Achievement(id: 'first', title: 'Первый шаг', description: 'Завершите 1 тренировку', icon: Icons.flag, requiredStreak: 1),
     Achievement(id: 'week', title: 'Недельный ритм', description: 'Стрик в 7 дней подряд', icon: Icons.local_fire_department, requiredStreak: 7),
@@ -33,7 +37,8 @@ class StreakNotifier extends Notifier<StreakState> {
     return const StreakState();
   }
 
-  List<String> get workoutTypes => [...defaultWorkoutTypes, ...state.customWorkoutTypes];
+  List<String> get workoutTypes =>
+      [...defaultWorkoutTypes, ...state.customWorkoutTypes];
 
   // ============================================================
   // НЕДЕЛЬНЫЙ СБРОС
@@ -41,8 +46,8 @@ class StreakNotifier extends Notifier<StreakState> {
 
   DateTime _currentWeekStart() {
     final now = DateTime.now();
-    final monday = now.subtract(Duration(days: now.weekday - 1));
-    return DateTime(monday.year, monday.month, monday.day);
+    // Через конструктор DateTime — безопаснее при переводе часов
+    return DateTime(now.year, now.month, now.day - (now.weekday - 1));
   }
 
   void _checkWeekReset() {
@@ -86,35 +91,69 @@ class StreakNotifier extends Notifier<StreakState> {
   double get levelProgress => currentLevelXp / requiredLevelXp;
 
   // ============================================================
-  // ЗАГРУЗКА И СОХРАНЕНИЕ
+  // ЗАГРУЗКА
   // ============================================================
 
   Future<void> _loadData() async {
     final box = await Hive.openBox('fitstreak_box');
     final raw = box.get('fitstreak_data');
-    bool loadedSuccessfully = false;
 
-    if (raw != null) {
-      try {
-        final data = Map<String, dynamic>.from(raw);
-        state = StreakState.fromJson(data);
-        loadedSuccessfully = true;
-      } catch (e) {
-        debugPrint('Ошибка загрузки данных (не перезаписываем!): $e');
-        return; // не вызываем saveAll, чтобы не стереть базу
-      }
-    } else {
-      loadedSuccessfully = true;
-    }
-
-    if (loadedSuccessfully) {
-      _checkWeekReset(); // сбрасываем weeklyXp, если началась новая неделя
+    if (raw == null) {
+      // Первый запуск — дефолтное состояние, всё ок
+      _loadFailed = false;
       processGapIfNeeded();
       generateDailyQuests();
+      return;
+    }
+
+    try {
+      final data = Map<String, dynamic>.from(raw);
+      state = StreakState.fromJson(data);
+      _loadFailed = false;
+    } catch (e) {
+      // Сохраняем сырые данные в резервный ключ,
+      // чтобы не потерять их при последующих saveAll
+      debugPrint('Ошибка парсинга данных. Сохраняем backup и НЕ перезаписываем: $e');
+      await box.put('fitstreak_data_backup', raw);
+      _loadFailed = true;
+      return; // Не вызываем processGap/quests/saveAll — ждём ручного разбора
+    }
+
+    _checkWeekReset();
+    processGapIfNeeded();
+    generateDailyQuests();
+  }
+
+  /// Вызывается из home_screen при возврате приложения (AppLifecycleState.resumed)
+  Future<void> reloadState() async {
+    if (_loadFailed) {
+      // При ошибке парсинга не трогаем ничего, пока пользователь не разберётся
+      return;
+    }
+
+    final box = await Hive.openBox('fitstreak_box');
+    final raw = box.get('fitstreak_data');
+    if (raw == null) return;
+
+    try {
+      final data = Map<String, dynamic>.from(raw);
+      state = StreakState.fromJson(data);
+      _checkWeekReset();
+      processGapIfNeeded();
+      generateDailyQuests();
+    } catch (e) {
+      debugPrint('reloadState: ошибка парсинга $e');
     }
   }
 
   Future<void> saveAll() async {
+    // Защита: если парсинг при старте упал — не перезаписываем данные
+    if (_loadFailed) {
+      debugPrint(
+          'saveAll заблокирован: предыдущая загрузка упала. Сырые данные в fitstreak_data_backup');
+      return;
+    }
+
     final box = await Hive.openBox('fitstreak_box');
     final data = state.toJson();
 
@@ -136,6 +175,7 @@ class StreakNotifier extends Notifier<StreakState> {
             .set({
               'user_name': state.userName,
               'xp': state.xp,
+              'weekly_xp': state.weeklyXp, // для недельной лиги
               'avatar_index': state.avatarIndex,
             }, SetOptions(merge: true));
       } catch (e) {
@@ -145,7 +185,7 @@ class StreakNotifier extends Notifier<StreakState> {
   }
 
   // ============================================================
-  // ЗАГРУЗКА ИЗ ОБЛАКА (С ЗАЩИТОЙ ОТ ПОТЕРИ ПРОГРЕССА)
+  // ЗАГРУЗКА ИЗ ОБЛАКА
   // ============================================================
 
   Future<void> loadFromCloud() async {
@@ -160,7 +200,6 @@ class StreakNotifier extends Notifier<StreakState> {
           .get();
 
       if (!doc.exists || doc.data() == null) {
-        // Облако пустое — заливаем локальные данные
         await saveAll();
         return;
       }
@@ -168,13 +207,22 @@ class StreakNotifier extends Notifier<StreakState> {
       final cloudData = doc.data()!;
       final cloudState = StreakState.fromJson(cloudData);
 
-      // Если локальный прогресс "новее" (больше XP или стрик) — оставляем локальный
+      // Определяем, откуда брать данные:
+      // 1) Больше общий XP
+      // 2) Больше стрик
+      // 3) Свежее дата последней тренировки
       final localXp = state.xp;
       final localStreak = state.streakCount;
+      final localLastCompletion = state.lastCompletionDate;
       final cloudXp = cloudState.xp;
       final cloudStreak = cloudState.streakCount;
+      final cloudLastCompletion = cloudState.lastCompletionDate;
 
-      final useCloud = cloudXp > localXp || cloudStreak > localStreak;
+      final useCloud = (cloudXp > localXp) ||
+          (cloudStreak > localStreak) ||
+          (cloudLastCompletion != null &&
+              (localLastCompletion == null ||
+                  cloudLastCompletion.isAfter(localLastCompletion)));
 
       if (useCloud) {
         state = cloudState;
@@ -182,7 +230,8 @@ class StreakNotifier extends Notifier<StreakState> {
 
       _checkWeekReset();
       await saveAll();
-      debugPrint('Синхронизация завершена. Источник: ${useCloud ? 'облако' : 'локально'}');
+      debugPrint(
+          'Синхронизация завершена. Источник: ${useCloud ? 'облако' : 'локально'}');
     } catch (e) {
       debugPrint('Ошибка загрузки из облака: $e');
     }
@@ -253,12 +302,21 @@ class StreakNotifier extends Notifier<StreakState> {
     pool.shuffle(Random());
 
     final newQuests = [
-      DailyQuest(id: pool[0]['id'] as String, title: pool[0]['title'] as String, xpReward: pool[0]['xp'] as int),
-      DailyQuest(id: pool[1]['id'] as String, title: pool[1]['title'] as String, xpReward: pool[1]['xp'] as int),
+      DailyQuest(
+          id: pool[0]['id'] as String,
+          title: pool[0]['title'] as String,
+          xpReward: pool[0]['xp'] as int),
+      DailyQuest(
+          id: pool[1]['id'] as String,
+          title: pool[1]['title'] as String,
+          xpReward: pool[1]['xp'] as int),
     ];
 
     final randomType = workoutTypes[Random().nextInt(workoutTypes.length)];
-    newQuests.add(DailyQuest(id: 'type_$randomType', title: 'Попробуй тип "$randomType"', xpReward: 50));
+    newQuests.add(DailyQuest(
+        id: 'type_$randomType',
+        title: 'Попробуй тип "$randomType"',
+        xpReward: 50));
 
     state = state.copyWith(questDate: todayStr, dailyQuests: newQuests);
     saveAll();
@@ -268,9 +326,13 @@ class StreakNotifier extends Notifier<StreakState> {
     bool changed = false;
     final today = DateTime.now();
     final todaySessions = state.sessions
-        .where((s) => s.date.year == today.year && s.date.month == today.month && s.date.day == today.day)
+        .where((s) =>
+            s.date.year == today.year &&
+            s.date.month == today.month &&
+            s.date.day == today.day)
         .toList();
-    final todaySeconds = todaySessions.fold(0, (total, s) => total + s.durationSeconds);
+    final todaySeconds =
+        todaySessions.fold(0, (total, s) => total + s.durationSeconds);
     final todayCount = todaySessions.length;
 
     final updatedQuests = state.dailyQuests.map((quest) {
@@ -328,7 +390,8 @@ class StreakNotifier extends Notifier<StreakState> {
         state.lastCompletionDate!.month == now.month &&
         state.lastCompletionDate!.day == now.day;
 
-    final newSession = WorkoutSession(date: now, type: type, durationSeconds: seconds);
+    final newSession =
+        WorkoutSession(date: now, type: type, durationSeconds: seconds);
     final newSessions = [...state.sessions, newSession];
     if (newSessions.length > 365) newSessions.removeAt(0);
 
@@ -367,30 +430,38 @@ class StreakNotifier extends Notifier<StreakState> {
     final regUnlocked = Set<String>.from(state.regularUnlocked);
     for (var ach in achievements) {
       if (ach.isSecret) continue;
-      if (state.streakCount >= ach.requiredStreak && !regUnlocked.contains(ach.id)) {
+      if (state.streakCount >= ach.requiredStreak &&
+          !regUnlocked.contains(ach.id)) {
         regUnlocked.add(ach.id);
         newlyUnlocked.add(ach);
       }
     }
 
     final secUnlocked = Set<String>.from(state.unlockedAchievements);
-    if ((nowTime.hour >= 22 || nowTime.hour < 4) && !secUnlocked.contains('night_owl')) {
+    if ((nowTime.hour >= 22 || nowTime.hour < 4) &&
+        !secUnlocked.contains('night_owl')) {
       secUnlocked.add('night_owl');
       newlyUnlocked.add(achievements.firstWhere((a) => a.id == 'night_owl'));
     }
-    if (state.todayWorkoutsCount >= 2 && !secUnlocked.contains('marathoner')) {
+    if (state.todayWorkoutsCount >= 2 &&
+        !secUnlocked.contains('marathoner')) {
       secUnlocked.add('marathoner');
       newlyUnlocked.add(achievements.firstWhere((a) => a.id == 'marathoner'));
     }
 
-    state = state.copyWith(regularUnlocked: regUnlocked, unlockedAchievements: secUnlocked);
+    state = state.copyWith(
+        regularUnlocked: regUnlocked, unlockedAchievements: secUnlocked);
 
     if (state.streakCount > state.maxStreak) {
       state = state.copyWith(maxStreak: state.streakCount);
     }
 
     await saveAll();
-    return (leveledUp: level > oldLevel, newAchievements: newlyUnlocked, boostApplied: boostApplied);
+    return (
+      leveledUp: level > oldLevel,
+      newAchievements: newlyUnlocked,
+      boostApplied: boostApplied
+    );
   }
 
   // ============================================================
@@ -417,7 +488,8 @@ class StreakNotifier extends Notifier<StreakState> {
     }
 
     quest.isRewardClaimed = true;
-    state = state.copyWith(crystals: state.crystals + gems, xp: state.xp + quest.xpReward);
+    state = state.copyWith(
+        crystals: state.crystals + gems, xp: state.xp + quest.xpReward);
     await saveAll();
     return gems;
   }
@@ -472,7 +544,10 @@ class StreakNotifier extends Notifier<StreakState> {
     if (type.isEmpty || workoutTypes.contains(type)) return;
     final newSet = Set<String>.from(state.customWorkoutTypes)..add(type);
     final counts = Map<String, int>.from(state.workoutTypeCounts)..[type] = 0;
-    state = state.copyWith(customWorkoutTypes: newSet, workoutTypeCounts: counts, selectedWorkoutType: type);
+    state = state.copyWith(
+        customWorkoutTypes: newSet,
+        workoutTypeCounts: counts,
+        selectedWorkoutType: type);
     saveAll();
   }
 
@@ -488,7 +563,7 @@ class StreakNotifier extends Notifier<StreakState> {
   }
 
   // ============================================================
-  // ЭКСПОРТ / ИМПОРТ (через toJson/fromJson)
+  // ЭКСПОРТ / ИМПОРТ
   // ============================================================
 
   String exportJson() {
