@@ -50,3 +50,7 @@ android/app/google-services.json
 build/
 android/build/
 .dart_tool/
+android/key.properties
+android/app/fitstreak-release-key.jks
+*.jks
+*.keystore
