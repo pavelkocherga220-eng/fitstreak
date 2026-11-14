@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:home_widget/home_widget.dart';
 import 'package:vibration/vibration.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/achievement.dart';
 import '../models/app_theme.dart';
@@ -92,6 +93,9 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _workoutTimer?.cancel();
+    try {
+      WakelockPlus.disable();
+    } catch (_) {}
     super.dispose();
   }
 
@@ -125,15 +129,75 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
     }
   }
 
+  // Конец текущей фазы интервальной тренировки. Фазы считаем по реальному
+  // времени, а не по тикам таймера: при блокировке экрана тики пропускаются.
+  DateTime? _phaseEndTime;
+
+  int get _scheduledIntervalSeconds =>
+      _intervalRounds * _intervalWorkTime +
+      (_intervalRounds - 1) * _intervalRestTime;
+
+  void _signalPhaseChange() {
+    Vibration.hasVibrator().then((hasVibrator) {
+      if (hasVibrator == true) {
+        Vibration.vibrate(pattern: [0, 500, 200, 500]);
+      }
+    });
+    playSound('beep');
+  }
+
+  /// Переключает фазы, если время текущей истекло. Возвращает true, если
+  /// тренировка завершена (последний рабочий интервал закончился).
+  bool _advanceIntervalPhases() {
+    final now = DateTime.now();
+    var changed = false;
+
+    while (_phaseEndTime != null && !now.isBefore(_phaseEndTime!)) {
+      changed = true;
+      if (_isResting) {
+        _isResting = false;
+        _currentRound++;
+        _phaseEndTime =
+            _phaseEndTime!.add(Duration(seconds: _intervalWorkTime));
+      } else if (_currentRound >= _intervalRounds) {
+        // Последний рабочий интервал закончен: лишний отдых в конце не нужен
+        _phaseEndTime = null;
+        _phaseTimeLeft = 0;
+        _signalPhaseChange();
+        return true;
+      } else {
+        _isResting = true;
+        _phaseEndTime =
+            _phaseEndTime!.add(Duration(seconds: _intervalRestTime));
+      }
+    }
+
+    if (changed) _signalPhaseChange();
+
+    if (_phaseEndTime != null) {
+      final msLeft = _phaseEndTime!.difference(now).inMilliseconds;
+      _phaseTimeLeft = (msLeft / 1000).ceil().clamp(0, 3600);
+    }
+    return false;
+  }
+
   void _startWorkoutTimer() {
     playSound('countdown');
     _totalSecondsSpentInSession = 0;
     _currentRound = 1;
     _isResting = false;
     _workoutStartTime = null;
+    _phaseEndTime = null;
 
     if (_workoutMode != 'Классический') {
       _phaseTimeLeft = _intervalWorkTime;
+    }
+
+    // Не даём экрану погаснуть во время тренировки
+    try {
+      WakelockPlus.enable();
+    } catch (e) {
+      debugPrint('wakelock enable error: $e');
     }
 
     setState(() {
@@ -152,6 +216,11 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
           if (_prepareCountdown <= 0) {
             _isPreparing = false;
             _workoutStartTime = DateTime.now();
+            if (_workoutMode != 'Классический') {
+              _phaseEndTime = _workoutStartTime!
+                  .add(Duration(seconds: _intervalWorkTime));
+              _phaseTimeLeft = _intervalWorkTime;
+            }
           }
         });
         return;
@@ -159,46 +228,30 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
       // --------------------------------
 
       // --- ОСНОВНАЯ ТРЕНИРОВКА ---
+      var finished = false;
       setState(() {
         if (_workoutStartTime != null) {
           _totalSecondsSpentInSession =
               DateTime.now().difference(_workoutStartTime!).inSeconds;
-        } else {
-          _totalSecondsSpentInSession++;
         }
 
         if (_workoutMode != 'Классический') {
-          _phaseTimeLeft--;
-
-          if (_phaseTimeLeft <= 0) {
-            Vibration.hasVibrator().then((hasVibrator) {
-              if (hasVibrator == true) {
-                Vibration.vibrate(pattern: [0, 500, 200, 500]);
-              }
-            });
-            playSound('beep');
-
-            if (_isResting) {
-              _isResting = false;
-              _currentRound++;
-
-              if (_currentRound > _intervalRounds) {
-                _finishWorkout();
-                return;
-              }
-              _phaseTimeLeft = _intervalWorkTime;
-            } else {
-              _isResting = true;
-              _phaseTimeLeft = _intervalRestTime;
-            }
+          finished = _advanceIntervalPhases();
+          if (finished) {
+            // Засчитываем запланированную длительность, а не время «простоя»
+            _totalSecondsSpentInSession = _scheduledIntervalSeconds;
           }
         }
       });
+      if (finished) _finishWorkout();
     });
   }
 
   Future<void> _finishWorkout() async {
     _workoutTimer?.cancel();
+    try {
+      WakelockPlus.disable();
+    } catch (_) {}
     playSound('finish');
 
     final sessionSeconds = _totalSecondsSpentInSession;
