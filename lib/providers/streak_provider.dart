@@ -23,6 +23,19 @@ class StreakNotifier extends Notifier<StreakState> {
   static const List<String> defaultWorkoutTypes = ['Силовая', 'Кардио', 'Йога', 'Растяжка'];
 
   // Флаг: если парсинг при загрузке упал — блокируем saveAll
+  /// Максимум секунд, засчитываемых за одну тренировку (защита от «забытого» таймера)
+  static const int maxWorkoutSeconds = 3 * 60 * 60;
+
+  // Автоначисленные награды за неоткрытые сундуки прошлого дня (показываем один раз)
+  ({int gems, int xp})? _pendingAutoClaim;
+
+  /// Возвращает и очищает сводку автоначисленных наград (или null).
+  ({int gems, int xp})? takeAutoClaimed() {
+    final r = _pendingAutoClaim;
+    _pendingAutoClaim = null;
+    return r;
+  }
+
   bool _loadFailed = false;
   bool get loadFailed => _loadFailed;
 
@@ -170,6 +183,8 @@ class StreakNotifier extends Notifier<StreakState> {
     }
   }
 
+  static const String _ownerKey = 'owner_uid';
+
   Future<void> saveAll() async {
     // Защита: если парсинг при старте упал — не перезаписываем данные
     if (_loadFailed) {
@@ -187,11 +202,22 @@ class StreakNotifier extends Notifier<StreakState> {
 
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
+      // Локальные данные принадлежат другому аккаунту — в облако не пишем,
+      // пока loadFromCloud не разберётся со сменой аккаунта.
+      final owner = box.get(_ownerKey) as String?;
+      if (owner != null && owner != user.uid) {
+        debugPrint('saveAll: локальные данные другого аккаунта, облако пропущено');
+        return;
+      }
+      if (owner == null) await box.put(_ownerKey, user.uid);
+
       try {
+        // Без merge: личный документ целиком принадлежит владельцу, иначе удалённые
+        // ключи вложенных словарей (planned_workouts) остаются в облаке.
         await FirebaseFirestore.instance
             .collection('users')
             .doc(user.uid)
-            .set(data, SetOptions(merge: true));
+            .set(data);
 
         await FirebaseFirestore.instance
             .collection('leaderboard')
@@ -212,12 +238,28 @@ class StreakNotifier extends Notifier<StreakState> {
   // ЗАГРУЗКА ИЗ ОБЛАКА
   // ============================================================
 
-  Future<void> loadFromCloud() async {
-    if (Firebase.apps.isEmpty) return;
+  /// Возвращает true, если локальные данные принадлежали другому аккаунту
+  /// и были заменены (их копия сохранена в ключе fitstreak_data_prev_owner).
+  Future<bool> loadFromCloud() async {
+    if (_loadFailed) return false;
+    if (Firebase.apps.isEmpty) return false;
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    if (user == null) return false;
 
+    bool switchedAccount = false;
     try {
+      final box = await Hive.openBox('fitstreak_box');
+      final owner = box.get(_ownerKey) as String?;
+      if (owner != null && owner != user.uid) {
+        // Вход под другим аккаунтом: не переносим чужой прогресс.
+        await box.put('fitstreak_data_prev_owner', box.get('fitstreak_data'));
+        state = const StreakState();
+        await box.put(_ownerKey, user.uid);
+        switchedAccount = true;
+      } else if (owner == null) {
+        await box.put(_ownerKey, user.uid); // первый вход: локальный прогресс остаётся
+      }
+
       final doc = await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
@@ -225,7 +267,7 @@ class StreakNotifier extends Notifier<StreakState> {
 
       if (!doc.exists || doc.data() == null) {
         await saveAll();
-        return;
+        return switchedAccount;
       }
 
       final cloudData = doc.data()!;
@@ -259,6 +301,7 @@ class StreakNotifier extends Notifier<StreakState> {
     } catch (e) {
       debugPrint('Ошибка загрузки из облака: $e');
     }
+    return switchedAccount;
   }
 
   // ============================================================
@@ -311,6 +354,19 @@ class StreakNotifier extends Notifier<StreakState> {
   // КВЕСТЫ
   // ============================================================
 
+  int _rollGems(ChestRarity rarity) {
+    switch (rarity) {
+      case ChestRarity.common:
+        return 10 + Random().nextInt(11);
+      case ChestRarity.rare:
+        return 30 + Random().nextInt(21);
+      case ChestRarity.epic:
+        return 80 + Random().nextInt(41);
+      case ChestRarity.legendary:
+        return 200 + Random().nextInt(101);
+    }
+  }
+
   void generateDailyQuests() {
     final now = DateTime.now();
     final todayStr = '${now.year}-${now.month}-${now.day}';
@@ -342,7 +398,30 @@ class StreakNotifier extends Notifier<StreakState> {
         title: 'Попробуй тип "$randomType"',
         xpReward: 50));
 
-    state = state.copyWith(questDate: todayStr, dailyQuests: newQuests);
+    // Неоткрытые сундуки вчерашнего дня начисляем автоматически, чтобы награда не пропала
+    int autoGems = 0;
+    int autoXp = 0;
+    for (final q in state.dailyQuests) {
+      if (q.isCompleted && !q.isRewardClaimed && q.chestRarity != null) {
+        autoGems += _rollGems(q.chestRarity!);
+        autoXp += q.xpReward;
+      }
+    }
+    if (autoGems > 0 || autoXp > 0) {
+      final prev = _pendingAutoClaim;
+      _pendingAutoClaim = (
+        gems: autoGems + (prev?.gems ?? 0),
+        xp: autoXp + (prev?.xp ?? 0),
+      );
+    }
+
+    state = state.copyWith(
+      questDate: todayStr,
+      dailyQuests: newQuests,
+      crystals: state.crystals + autoGems,
+      xp: state.xp + autoXp,
+      weeklyXp: state.weeklyXp + autoXp,
+    );
     saveAll();
   }
 
@@ -407,6 +486,7 @@ class StreakNotifier extends Notifier<StreakState> {
 
   Future<({bool leveledUp, List<Achievement> newAchievements, bool boostApplied})>
       finishWorkout(int seconds, String note, {required String type}) async {
+    seconds = seconds.clamp(0, maxWorkoutSeconds);
     final oldLevel = level;
     final now = DateTime.now();
     final wasCompletedToday = state.lastCompletionDate != null &&
@@ -495,25 +575,13 @@ class StreakNotifier extends Notifier<StreakState> {
   Future<int> openChest(DailyQuest quest) async {
     if (quest.chestRarity == null || quest.isRewardClaimed) return 0;
 
-    int gems = 0;
-    switch (quest.chestRarity!) {
-      case ChestRarity.common:
-        gems = 10 + Random().nextInt(11);
-        break;
-      case ChestRarity.rare:
-        gems = 30 + Random().nextInt(21);
-        break;
-      case ChestRarity.epic:
-        gems = 80 + Random().nextInt(41);
-        break;
-      case ChestRarity.legendary:
-        gems = 200 + Random().nextInt(101);
-        break;
-    }
+    final gems = _rollGems(quest.chestRarity!);
 
     quest.isRewardClaimed = true;
     state = state.copyWith(
-        crystals: state.crystals + gems, xp: state.xp + quest.xpReward);
+        crystals: state.crystals + gems,
+        xp: state.xp + quest.xpReward,
+        weeklyXp: state.weeklyXp + quest.xpReward);
     await saveAll();
     return gems;
   }
