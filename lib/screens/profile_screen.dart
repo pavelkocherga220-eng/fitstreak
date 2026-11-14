@@ -157,12 +157,22 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
                       onPressed: () async {
+                        final messenger = ScaffoldMessenger.of(context);
                         final creds = await AuthService().signInWithGoogle();
-                        if (creds != null) {
-                          await ref.read(streakProvider.notifier).loadFromCloud();
-                          if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Успешный вход! Прогресс синхронизирован.')));
+                        if (creds == null) {
+                          messenger.showSnackBar(const SnackBar(content: Text('Вход не выполнен. Попробуйте ещё раз.')));
+                          return;
                         }
+                        final switched = await ref.read(streakProvider.notifier).loadFromCloud();
+                        // Облачные данные могли принести другие времена напоминаний
+                        try {
+                          await scheduleReminders(ref.read(streakProvider).reminderTimes);
+                        } catch (_) {}
+                        messenger.showSnackBar(SnackBar(
+                          content: Text(switched
+                              ? 'Вход под другим аккаунтом: загружен его прогресс. Прежние данные сохранены локально.'
+                              : 'Успешный вход! Прогресс синхронизирован.'),
+                        ));
                       },
                     ),
                   );

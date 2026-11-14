@@ -75,7 +75,20 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
     await ref.read(streakProvider.notifier).ready;
     if (!mounted) return;
     await _rescheduleReminders();
+    _showAutoClaimed();
     _checkSmartReminder();
+  }
+
+  // Сводка автоначисленных наград за неоткрытые сундуки прошлого дня
+  void _showAutoClaimed() {
+    if (!mounted) return;
+    final r = ref.read(streakProvider.notifier).takeAutoClaimed();
+    if (r == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(
+          '🎁 Неоткрытые сундуки засчитаны: +${r.gems} 💎, +${r.xp} XP'),
+      backgroundColor: Colors.green,
+    ));
   }
 
   Future<void> _rescheduleReminders() async {
@@ -104,6 +117,7 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
       () async {
         await ref.read(streakProvider.notifier).reloadState();
         await _rescheduleReminders();
+        _showAutoClaimed();
       }();
     }
   }
@@ -202,6 +216,7 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
     playSound('finish');
 
     final sessionSeconds = _totalSecondsSpentInSession;
+    final wasCapped = sessionSeconds > StreakNotifier.maxWorkoutSeconds;
 
     if (sessionSeconds < 10) {
       if (mounted) {
@@ -234,6 +249,12 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
         );
 
     if (!mounted) return;
+
+    if (wasCapped) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Время тренировки ограничено 3 часами (таймер работал слишком долго).')));
+    }
 
     if (result.boostApplied) {
       ScaffoldMessenger.of(context).showSnackBar(
