@@ -44,6 +44,7 @@ dependencies:
   google_sign_in: ^6.2.1
   cloud_firestore: ^5.0.2
   vibration: ^3.2.1
+  wakelock_plus: ^1.2.8
   timezone: ^0.9.4
   flutter_timezone: ^5.1.1
 
