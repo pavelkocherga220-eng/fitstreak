@@ -130,6 +130,11 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      // Приложение сворачивают: отправляем отложенные изменения в облако сразу
+      ref.read(streakProvider.notifier).flushCloud();
+    }
     if (state == AppLifecycleState.resumed) {
       // Смена дня / недели / квестов / заморозок после сворачивания
       // Без smart-проверки: пользователь уже в приложении, уведомление было бы спамом
