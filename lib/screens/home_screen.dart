@@ -110,7 +110,9 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
     if (!mounted) return;
     final state = ref.read(streakProvider);
     try {
-      await scheduleReminders(state.reminderTimes);
+      // Если сегодня уже тренировались — сегодняшнее напоминание не нужно
+      await scheduleReminders(state.reminderTimes,
+          skipToday: _isSameDay(state.lastCompletionDate, DateTime.now()));
     } catch (e) {
       debugPrint('scheduleReminders error: $e');
     }
@@ -383,6 +385,9 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
         );
 
     if (!mounted) return;
+
+    // Тренировка засчитана: отменяем сегодняшнее напоминание
+    _rescheduleReminders();
 
     if (wasCapped) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(

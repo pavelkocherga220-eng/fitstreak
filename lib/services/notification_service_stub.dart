@@ -61,7 +61,10 @@ void showNotification(String title, String body) async {
   }
 }
 
-Future<void> scheduleReminders(List<TimeOfDay> times) async {
+/// [skipToday] — сегодня уже тренировались: ближайшее напоминание переносится
+/// на завтра (дальше оно повторяется ежедневно, как обычно).
+Future<void> scheduleReminders(List<TimeOfDay> times,
+    {bool skipToday = false}) async {
   try {
     // Отменяем старые запланированные уведомления
     await _localNotifications.cancelAll();
@@ -91,9 +94,10 @@ Future<void> scheduleReminders(List<TimeOfDay> times) async {
         tz.local, now.year, now.month, now.day, time.hour, time.minute,
       );
       
-      // Если время уже прошло сегодня, планируем на завтра
-      if (scheduledDate.isBefore(now)) {
-        scheduledDate = scheduledDate.add(const Duration(days: 1));
+      // Если время уже прошло сегодня (или тренировка уже была), планируем на завтра
+      if (skipToday || scheduledDate.isBefore(now)) {
+        scheduledDate = tz.TZDateTime(
+            tz.local, now.year, now.month, now.day + 1, time.hour, time.minute);
       }
 
       await _localNotifications.zonedSchedule(

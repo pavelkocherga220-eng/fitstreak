@@ -16,6 +16,12 @@ const List<Map<String, dynamic>> avatars = [
   {'icon': Icons.sports_basketball, 'color': Colors.amber},  
 ];
 
+
+bool _trainedToday(DateTime? last) {
+  final n = DateTime.now();
+  return last != null && last.year == n.year && last.month == n.month && last.day == n.day;
+}
+
 class ProfileScreen extends ConsumerStatefulWidget {
   final Color primaryColor;
   final Color secondaryColor;
@@ -166,7 +172,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         final switched = await ref.read(streakProvider.notifier).loadFromCloud();
                         // Облачные данные могли принести другие времена напоминаний
                         try {
-                          await scheduleReminders(ref.read(streakProvider).reminderTimes);
+                          final cur = ref.read(streakProvider);
+                          await scheduleReminders(cur.reminderTimes,
+                              skipToday: _trainedToday(cur.lastCompletionDate));
                         } catch (_) {}
                         messenger.showSnackBar(SnackBar(
                           content: Text(switched
@@ -330,7 +338,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                           if (picked != null) {
                             final newTimes = [...state.reminderTimes, picked]..sort((a, b) => (a.hour * 60 + a.minute).compareTo(b.hour * 60 + b.minute));
                             ref.read(streakProvider.notifier).setReminderTimes(newTimes);
-                            await scheduleReminders(newTimes);
+                            await scheduleReminders(newTimes,
+                                skipToday: _trainedToday(state.lastCompletionDate));
                           }
                         },
                       ),
@@ -344,7 +353,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                           onPressed: () {
                             final newTimes = state.reminderTimes.where((t) => t != time).toList();
                             ref.read(streakProvider.notifier).setReminderTimes(newTimes);
-                            scheduleReminders(newTimes);
+                            scheduleReminders(newTimes,
+                                skipToday: _trainedToday(state.lastCompletionDate));
                           },
                         ),
                       );
