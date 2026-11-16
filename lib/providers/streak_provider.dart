@@ -60,6 +60,7 @@ class StreakNotifier extends Notifier<StreakState> {
 
   @override
   StreakState build() {
+    ref.onDispose(() => _cloudTimer?.cancel());
     _loadData();
     return const StreakState();
   }
@@ -186,7 +187,13 @@ class StreakNotifier extends Notifier<StreakState> {
 
   static const String _ownerKey = 'owner_uid';
 
-  Future<void> saveAll() async {
+  Timer? _cloudTimer;
+  static const _cloudDelay = Duration(seconds: 2);
+
+  /// Локально сохраняем сразу, в облако — не чаще раза в пару секунд:
+  /// серия быстрых изменений даёт одну запись в Firestore.
+  /// [cloud] = false — только локально (например, выбор типа тренировки).
+  Future<void> saveAll({bool cloud = true}) async {
     // Защита: если парсинг при старте упал — не перезаписываем данные
     if (_loadFailed) {
       debugPrint(
@@ -195,43 +202,60 @@ class StreakNotifier extends Notifier<StreakState> {
     }
 
     final box = await Hive.openBox('fitstreak_box');
-    final data = state.toJson();
+    await box.put('fitstreak_data', state.toJson());
 
-    await box.put('fitstreak_data', data);
+    if (!cloud) return;
+    _cloudTimer?.cancel();
+    _cloudTimer = Timer(_cloudDelay, () {
+      _pushToCloud();
+    });
+  }
 
+  /// Немедленно отправляет отложенные изменения (вызывать при сворачивании
+  /// приложения). Ничего не делает, если отправлять нечего.
+  Future<void> flushCloud() async {
+    if (_cloudTimer == null || !_cloudTimer!.isActive) return;
+    _cloudTimer!.cancel();
+    await _pushToCloud();
+  }
+
+  Future<void> _pushToCloud() async {
+    if (_loadFailed) return;
     if (Firebase.apps.isEmpty) return;
 
     final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      // Локальные данные принадлежат другому аккаунту — в облако не пишем,
-      // пока loadFromCloud не разберётся со сменой аккаунта.
-      final owner = box.get(_ownerKey) as String?;
-      if (owner != null && owner != user.uid) {
-        debugPrint('saveAll: локальные данные другого аккаунта, облако пропущено');
-        return;
-      }
-      if (owner == null) await box.put(_ownerKey, user.uid);
+    if (user == null) return;
 
-      try {
-        // Без merge: личный документ целиком принадлежит владельцу, иначе удалённые
-        // ключи вложенных словарей (planned_workouts) остаются в облаке.
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .set(data);
+    final box = await Hive.openBox('fitstreak_box');
+    // Локальные данные принадлежат другому аккаунту — в облако не пишем,
+    // пока loadFromCloud не разберётся со сменой аккаунта.
+    final owner = box.get(_ownerKey) as String?;
+    if (owner != null && owner != user.uid) {
+      debugPrint('saveAll: локальные данные другого аккаунта, облако пропущено');
+      return;
+    }
+    if (owner == null) await box.put(_ownerKey, user.uid);
 
-        await FirebaseFirestore.instance
-            .collection('leaderboard')
-            .doc(user.uid)
-            .set({
-              'user_name': state.userName,
-              'xp': state.xp,
-              'weekly_xp': state.weeklyXp, // для недельной лиги
-              'avatar_index': state.avatarIndex,
-            }, SetOptions(merge: true));
-      } catch (e) {
-        debugPrint('Ошибка сохранения в облако: $e');
-      }
+    final data = state.toJson();
+    try {
+      // Без merge: личный документ целиком принадлежит владельцу, иначе удалённые
+      // ключи вложенных словарей (planned_workouts) остаются в облаке.
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .set(data);
+
+      await FirebaseFirestore.instance
+          .collection('leaderboard')
+          .doc(user.uid)
+          .set({
+            'user_name': state.userName,
+            'xp': state.xp,
+            'weekly_xp': state.weeklyXp, // для недельной лиги
+            'avatar_index': state.avatarIndex,
+          }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('Ошибка сохранения в облако: $e');
     }
   }
 
@@ -626,7 +650,7 @@ class StreakNotifier extends Notifier<StreakState> {
 
   void selectWorkoutType(String type) {
     state = state.copyWith(selectedWorkoutType: type);
-    saveAll();
+    saveAll(cloud: false);
   }
 
   void planWorkout(int dayIndex, String? type) {
