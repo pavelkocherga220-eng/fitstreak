@@ -9,6 +9,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 
 import '../models/achievement.dart';
+import '../models/custom_interval.dart';
 import '../models/daily_quest.dart';
 import '../models/streak_state.dart';
 import '../models/workout_note.dart';
@@ -613,6 +614,13 @@ class StreakNotifier extends Notifier<StreakState> {
 
   void setReminderTimes(List<TimeOfDay> times) {
     state = state.copyWith(reminderTimes: times);
+    saveAll();
+  }
+
+  void setCustomCircuit(List<CustomInterval> circuit, int laps) {
+    if (circuit.isEmpty) return;
+    state = state.copyWith(
+        customCircuit: List.unmodifiable(circuit), customLaps: laps.clamp(1, 20));
     saveAll();
   }
 
