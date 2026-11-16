@@ -10,6 +10,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/achievement.dart';
 import '../models/app_theme.dart';
+import '../models/custom_interval.dart';
 import '../models/daily_quest.dart';
 import '../models/streak_state.dart';
 import '../providers/streak_provider.dart';
@@ -24,6 +25,7 @@ part 'home_screen_dialogs.dart';
 part 'home_screen_sheets.dart';
 part 'home_screen_data.dart';
 part 'home_screen_helpers.dart';
+part 'home_screen_circuit.dart';
 
 bool _isSameDay(DateTime? a, DateTime? b) {
   if (a == null || b == null) return false;
@@ -64,6 +66,11 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
   int _phaseTimeLeft = 0;
   bool _isResting = false;
   int _currentRound = 1;
+  List<IntervalPhase> _phases = const [];
+  int _phaseIdx = 0;
+  int _totalRounds = 1;
+  int _scheduledSeconds = 0;
+  String _phaseLabel = '';
 
   final List<String> _weekDays = const ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
@@ -152,9 +159,49 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
   // времени, а не по тикам таймера: при блокировке экрана тики пропускаются.
   DateTime? _phaseEndTime;
 
-  int get _scheduledIntervalSeconds =>
-      _intervalRounds * _intervalWorkTime +
-      (_intervalRounds - 1) * _intervalRestTime;
+  int get _scheduledIntervalSeconds => _scheduledSeconds;
+
+  /// Строит список фаз для выбранного режима.
+  void _buildPhases() {
+    final List<IntervalPhase> phases;
+    if (_workoutMode == 'Свои раунды') {
+      final st = ref.read(streakProvider);
+      phases = IntervalPhase.build(st.customCircuit, st.customLaps);
+    } else {
+      phases = IntervalPhase.build(
+        List.generate(
+            _intervalRounds,
+            (_) => CustomInterval(
+                name: '',
+                workSeconds: _intervalWorkTime,
+                restSeconds: _intervalRestTime)),
+        1,
+      );
+    }
+    _phases = phases;
+    _totalRounds = phases.isEmpty ? 1 : phases.last.round;
+    _scheduledSeconds = phases.fold(0, (sum, p) => sum + p.seconds);
+    _phaseIdx = 0;
+    _applyPhase();
+  }
+
+  void _applyPhase() {
+    if (_phases.isEmpty) return;
+    final p = _phases[_phaseIdx];
+    _isResting = p.isRest;
+    _currentRound = p.round;
+    _phaseLabel = p.label;
+  }
+
+  int get _firstPhaseSeconds => _phases.isEmpty ? 0 : _phases.first.seconds;
+
+  /// Название следующего упражнения (для подсказки во время отдыха).
+  String? get _nextExerciseLabel {
+    for (var i = _phaseIdx + 1; i < _phases.length; i++) {
+      if (!_phases[i].isRest) return _phases[i].label;
+    }
+    return null;
+  }
 
   void _signalPhaseChange() {
     Vibration.hasVibrator().then((hasVibrator) {
@@ -173,22 +220,17 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
 
     while (_phaseEndTime != null && !now.isBefore(_phaseEndTime!)) {
       changed = true;
-      if (_isResting) {
-        _isResting = false;
-        _currentRound++;
-        _phaseEndTime =
-            _phaseEndTime!.add(Duration(seconds: _intervalWorkTime));
-      } else if (_currentRound >= _intervalRounds) {
-        // Последний рабочий интервал закончен: лишний отдых в конце не нужен
+      if (_phaseIdx >= _phases.length - 1) {
+        // Последняя рабочая фаза закончена: лишний отдых в конце не нужен
         _phaseEndTime = null;
         _phaseTimeLeft = 0;
         _signalPhaseChange();
         return true;
-      } else {
-        _isResting = true;
-        _phaseEndTime =
-            _phaseEndTime!.add(Duration(seconds: _intervalRestTime));
       }
+      _phaseIdx++;
+      _applyPhase();
+      _phaseEndTime =
+          _phaseEndTime!.add(Duration(seconds: _phases[_phaseIdx].seconds));
     }
 
     if (changed) _signalPhaseChange();
@@ -209,7 +251,8 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
     _phaseEndTime = null;
 
     if (_workoutMode != 'Классический') {
-      _phaseTimeLeft = _intervalWorkTime;
+      _buildPhases();
+      _phaseTimeLeft = _firstPhaseSeconds;
     }
 
     // Не даём экрану погаснуть во время тренировки
@@ -237,8 +280,8 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
             _workoutStartTime = DateTime.now();
             if (_workoutMode != 'Классический') {
               _phaseEndTime = _workoutStartTime!
-                  .add(Duration(seconds: _intervalWorkTime));
-              _phaseTimeLeft = _intervalWorkTime;
+                  .add(Duration(seconds: _firstPhaseSeconds));
+              _phaseTimeLeft = _firstPhaseSeconds;
             }
           }
         });
@@ -403,7 +446,7 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
-                    children: ['Классический', 'Интервалы', 'Табата']
+                    children: ['Классический', 'Интервалы', 'Табата', 'Свои раунды']
                         .map((mode) {
                       final isSelected = _workoutMode == mode;
                       return ChoiceChip(
@@ -431,7 +474,14 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
                       );
                     }).toList(),
                   ),
-                  if (_workoutMode != 'Классический') ...[
+                  if (_workoutMode == 'Свои раунды') ...[
+                    const SizedBox(height: 16),
+                    const Divider(color: Colors.white24),
+                    ..._buildCustomCircuitEditor(currentState, notifier,
+                        () => setModalState(() {})),
+                  ],
+                  if (_workoutMode != 'Классический' &&
+                      _workoutMode != 'Свои раунды') ...[
                     const SizedBox(height: 24),
                     const Divider(color: Colors.white24),
                     const SizedBox(height: 16),
@@ -801,9 +851,24 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
                                   ? Colors.blueAccent
                                   : widget.currentTheme.primary,
                               letterSpacing: 2)),
-                      Text('Раунд $_currentRound из $_intervalRounds',
+                      if (_phaseLabel.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(_phaseLabel,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white)),
+                        ),
+                      Text('Раунд $_currentRound из $_totalRounds',
                           style: const TextStyle(
                               fontSize: 12, color: Colors.white54)),
+                      if (_isResting && _nextExerciseLabel != null &&
+                          _nextExerciseLabel!.isNotEmpty)
+                        Text('Далее: $_nextExerciseLabel',
+                            style: const TextStyle(
+                                fontSize: 13, color: Colors.white70)),
                       const SizedBox(height: 8),
                     ],
                     Row(mainAxisSize: MainAxisSize.min, children: [

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'custom_interval.dart';
 import 'daily_quest.dart';
 import 'workout_note.dart';
 import 'workout_session.dart';
@@ -21,6 +22,8 @@ class StreakState {
   final List<DailyQuest> dailyQuests;
   final String questDate;
   final String selectedWorkoutType;
+  final List<CustomInterval> customCircuit;
+  final int customLaps;
   final List<WorkoutSession> sessions;
   final List<WorkoutNote> notes;
   final Map<int, String> plannedWorkouts;
@@ -49,6 +52,8 @@ class StreakState {
     this.dailyQuests = const [],
     this.questDate = '',
     this.selectedWorkoutType = 'Силовая',
+    this.customCircuit = CustomInterval.defaults,
+    this.customLaps = 1,
     this.sessions = const [],
     this.notes = const [],
     this.plannedWorkouts = const {},
@@ -78,6 +83,8 @@ class StreakState {
     List<DailyQuest>? dailyQuests,
     String? questDate,
     String? selectedWorkoutType,
+    List<CustomInterval>? customCircuit,
+    int? customLaps,
     List<WorkoutSession>? sessions,
     List<WorkoutNote>? notes,
     Map<int, String>? plannedWorkouts,
@@ -106,6 +113,8 @@ class StreakState {
       dailyQuests: dailyQuests ?? this.dailyQuests,
       questDate: questDate ?? this.questDate,
       selectedWorkoutType: selectedWorkoutType ?? this.selectedWorkoutType,
+      customCircuit: customCircuit ?? this.customCircuit,
+      customLaps: customLaps ?? this.customLaps,
       sessions: sessions ?? this.sessions,
       notes: notes ?? this.notes,
       plannedWorkouts: plannedWorkouts ?? this.plannedWorkouts,
@@ -138,6 +147,8 @@ class StreakState {
         'quest_date': questDate,
         'daily_quests': dailyQuests.map((q) => q.toJson()).toList(),
         'selected_workout_type': selectedWorkoutType,
+        'custom_circuit': customCircuit.map((e) => e.toJson()).toList(),
+        'custom_laps': customLaps,
         'sessions': sessions.map((s) => s.toJson()).toList(),
         'notes': notes.map((n) => n.toJson()).toList(),
         'planned_workouts': plannedWorkouts.map((k, v) => MapEntry(k.toString(), v)),
@@ -189,6 +200,13 @@ class StreakState {
           .map((e) => DailyQuest.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
       selectedWorkoutType: (data['selected_workout_type'] as String?) ?? 'Силовая',
+      customCircuit: () {
+        final list = ((data['custom_circuit'] as List?) ?? [])
+            .map((e) => CustomInterval.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
+        return list.isEmpty ? CustomInterval.defaults : list;
+      }(),
+      customLaps: ((data['custom_laps'] as num?)?.toInt() ?? 1).clamp(1, 20),
       sessions: ((data['sessions'] as List?) ?? [])
           .map((e) => WorkoutSession.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
