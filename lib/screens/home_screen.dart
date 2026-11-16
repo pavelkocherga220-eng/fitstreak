@@ -15,6 +15,7 @@ import '../models/daily_quest.dart';
 import '../models/streak_state.dart';
 import '../providers/streak_provider.dart';
 import '../services/notification_service.dart';
+import '../services/voice_service.dart';
 import '../sound/sound_player.dart';
 import '../widgets/workout_heatmap.dart';
 import '../widgets/widget_ui.dart';
@@ -78,6 +79,7 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    VoiceService.instance.load();
     // initNotifications() уже вызван в main.dart — здесь не дублируем.
     _onAppStart();
   }
@@ -118,6 +120,7 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _workoutTimer?.cancel();
+    VoiceService.instance.stop();
     try {
       WakelockPlus.disable();
     } catch (_) {}
@@ -203,6 +206,26 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
     return null;
   }
 
+  /// Небольшая пауза, чтобы голос не перекрывал звуковой сигнал.
+  void _speakAfterBeep(String text) {
+    Future.delayed(const Duration(milliseconds: 700), () {
+      VoiceService.instance.speak(text);
+    });
+  }
+
+  void _speakCurrentPhase() {
+    if (_phases.isEmpty) return;
+    final p = _phases[_phaseIdx];
+    if (p.isRest) {
+      final next = _nextExerciseLabel;
+      _speakAfterBeep(next != null && next.isNotEmpty
+          ? 'Отдых. Далее: $next'
+          : 'Отдых');
+    } else {
+      _speakAfterBeep(p.label.isNotEmpty ? p.label : 'Раунд ${p.round}');
+    }
+  }
+
   void _signalPhaseChange() {
     Vibration.hasVibrator().then((hasVibrator) {
       if (hasVibrator == true) {
@@ -225,6 +248,7 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
         _phaseEndTime = null;
         _phaseTimeLeft = 0;
         _signalPhaseChange();
+        _speakAfterBeep('Тренировка завершена');
         return true;
       }
       _phaseIdx++;
@@ -233,7 +257,10 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
           _phaseEndTime!.add(Duration(seconds: _phases[_phaseIdx].seconds));
     }
 
-    if (changed) _signalPhaseChange();
+    if (changed) {
+      _signalPhaseChange();
+      _speakCurrentPhase();
+    }
 
     if (_phaseEndTime != null) {
       final msLeft = _phaseEndTime!.difference(now).inMilliseconds;
@@ -282,6 +309,7 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
               _phaseEndTime = _workoutStartTime!
                   .add(Duration(seconds: _firstPhaseSeconds));
               _phaseTimeLeft = _firstPhaseSeconds;
+              _speakCurrentPhase();
             }
           }
         });
@@ -516,6 +544,17 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
                         onChanged: (v) =>
                             setModalState(() => _intervalRounds = v.toInt())),
                   ],
+                  if (_workoutMode != 'Классический')
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Голосовые подсказки',
+                          style: TextStyle(color: Colors.white)),
+                      value: VoiceService.instance.enabled,
+                      onChanged: (v) async {
+                        await VoiceService.instance.setEnabled(v);
+                        setModalState(() {});
+                      },
+                    ),
                   const SizedBox(height: 24),
                   SizedBox(
                     width: double.infinity,

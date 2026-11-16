@@ -146,8 +146,7 @@ extension _HomeCircuit on _StreakHomeScreenState {
       notifier.setCustomCircuit(copy, laps);
       refresh();
     }
-    nameCtrl.dispose();
-    workCtrl.dispose();
-    restCtrl.dispose();
+    // Контроллеры не удаляем сразу: диалог ещё проигрывает анимацию закрытия
+    // и обращается к ним (dispose здесь вызывал ошибку после «Сохранить»).
   }
 }
