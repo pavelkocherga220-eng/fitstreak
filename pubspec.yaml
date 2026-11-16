@@ -45,6 +45,7 @@ dependencies:
   cloud_firestore: ^5.0.2
   vibration: ^3.2.1
   wakelock_plus: ^1.2.8
+  flutter_tts: ^4.2.0
   timezone: ^0.9.4
   flutter_timezone: ^5.1.1
 
