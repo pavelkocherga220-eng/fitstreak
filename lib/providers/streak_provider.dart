@@ -8,6 +8,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 
+import '../logic/streak_logic.dart' as logic;
 import '../models/achievement.dart';
 import '../models/custom_interval.dart';
 import '../models/daily_quest.dart';
@@ -25,7 +26,7 @@ class StreakNotifier extends Notifier<StreakState> {
 
   // Флаг: если парсинг при загрузке упал — блокируем saveAll
   /// Максимум секунд, засчитываемых за одну тренировку (защита от «забытого» таймера)
-  static const int maxWorkoutSeconds = 3 * 60 * 60;
+  static const int maxWorkoutSeconds = logic.maxWorkoutSeconds;
 
   // Автоначисленные награды за неоткрытые сундуки прошлого дня (показываем один раз)
   ({int gems, int xp})? _pendingAutoClaim;
@@ -73,18 +74,14 @@ class StreakNotifier extends Notifier<StreakState> {
   // ============================================================
 
   DateTime _currentWeekStart() {
-    final now = DateTime.now();
-    // Через конструктор DateTime — безопаснее при переводе часов
-    return DateTime(now.year, now.month, now.day - (now.weekday - 1));
+    return logic.weekStart(DateTime.now());
   }
 
   void _checkWeekReset() {
     final currentWeek = _currentWeekStart();
     final savedWeek = state.weekStartDate;
 
-    if (savedWeek == null ||
-        DateTime(savedWeek.year, savedWeek.month, savedWeek.day)
-            .isBefore(currentWeek)) {
+    if (logic.needsWeekReset(savedWeek, currentWeek)) {
       state = state.copyWith(weeklyXp: 0, weekStartDate: currentWeek);
     }
   }
@@ -94,23 +91,11 @@ class StreakNotifier extends Notifier<StreakState> {
   // ============================================================
 
   int _getXpRequirement(int level) {
-    if (level <= 10) return level * 100;
-    if (level <= 20) return 1000 + (level - 10) * 500;
-    return 6000 + (level - 20) * 1000;
+    return logic.xpRequirement(level);
   }
 
   ({int level, int currentXp, int requiredXp}) get levelInfo {
-    int level = 1;
-    int xpRemaining = state.xp;
-    while (true) {
-      final req = _getXpRequirement(level);
-      if (xpRemaining >= req) {
-        xpRemaining -= req;
-        level++;
-      } else {
-        return (level: level, currentXp: xpRemaining, requiredXp: req);
-      }
-    }
+    return logic.levelFromXp(state.xp);
   }
 
   int get level => levelInfo.level;
@@ -338,27 +323,20 @@ class StreakNotifier extends Notifier<StreakState> {
 
     DateTime dateOnly(DateTime d) => DateTime.utc(d.year, d.month, d.day);
     final today = dateOnly(DateTime.now());
-    final lastDay = dateOnly(state.lastCompletionDate!);
 
-    final charged = state.lastGapProcessedDate == null
-        ? lastDay
-        : dateOnly(state.lastGapProcessedDate!).subtract(const Duration(days: 1));
+    final gap = logic.processGap(
+      lastCompletion: state.lastCompletionDate!,
+      lastGapProcessed: state.lastGapProcessedDate,
+      now: DateTime.now(),
+      streak: state.streakCount,
+      freezes: state.streakFreezes,
+    );
 
-    final anchor = charged.isAfter(lastDay) ? charged : lastDay;
-    final missed = today.difference(anchor).inDays - 1;
-
-    if (missed > 0) {
-      int newStreak = state.streakCount;
-      int newFreezes = state.streakFreezes;
+    if (gap.missed > 0) {
+      final newStreak = gap.streak;
+      final newFreezes = gap.freezes;
       final newPlanned = Map<int, String>.from(state.plannedWorkouts);
-
-      if (newFreezes >= missed) {
-        newFreezes -= missed;
-      } else {
-        newStreak = 0;
-        newFreezes = 0;
-        newPlanned.clear();
-      }
+      if (gap.streakLost) newPlanned.clear();
 
       state = state.copyWith(
         streakCount: newStreak,
