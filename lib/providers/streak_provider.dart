@@ -90,10 +90,6 @@ class StreakNotifier extends Notifier<StreakState> {
   // УРОВНИ И ОПЫТ
   // ============================================================
 
-  int _getXpRequirement(int level) {
-    return logic.xpRequirement(level);
-  }
-
   ({int level, int currentXp, int requiredXp}) get levelInfo {
     return logic.levelFromXp(state.xp);
   }
