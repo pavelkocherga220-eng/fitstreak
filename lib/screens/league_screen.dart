@@ -20,7 +20,6 @@ class LeagueScreen extends ConsumerWidget {
     final state = ref.watch(streakProvider);
 
     return Scaffold(
-      backgroundColor: const Color(0xFF121212),
       appBar: AppBar(
         title: const Text('🏆 Лига FitStreak'),
         centerTitle: true,

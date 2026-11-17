@@ -696,9 +696,13 @@ class _StreakHomeScreenState extends ConsumerState<StreakHomeScreen>
                     ],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight)),
-            currentAccountPicture: CircleAvatar(
-                backgroundColor: Colors.white24,
-                child: const Icon(Icons.person, size: 40, color: Colors.white)),
+            currentAccountPicture: Builder(builder: (_) {
+              final av = avatars[state.avatarIndex % avatars.length];
+              final Color c = av['color'] as Color;
+              return CircleAvatar(
+                  backgroundColor: c.withValues(alpha: 0.25),
+                  child: Icon(av['icon'] as IconData, size: 36, color: c));
+            }),
             accountName: Text(state.userName,
                 style: const TextStyle(
                     color: Colors.white,

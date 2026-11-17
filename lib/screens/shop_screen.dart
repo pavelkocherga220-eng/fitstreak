@@ -14,7 +14,6 @@ class ShopScreen extends ConsumerWidget {
     final notifier = ref.read(streakProvider.notifier);
 
     return Scaffold(
-      backgroundColor: const Color(0xFF121212),
       appBar: AppBar(
         title: const Text('🛒 Магазин'),
         centerTitle: true,
