@@ -131,7 +131,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final currentAvatar = avatars[state.avatarIndex % avatars.length];
 
     return Scaffold(
-      backgroundColor: const Color(0xFF121212),
       appBar: AppBar(title: const Text('👤 Мой профиль'), centerTitle: true, backgroundColor: const Color(0xFF1E1E1E)),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
